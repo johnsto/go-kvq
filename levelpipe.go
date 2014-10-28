@@ -21,8 +21,10 @@ func init() {
 
 type Pipe struct {
 	db    *levigo.DB
-	taken map[[]byte]struct{}
+	taken map[uint64]struct{}
 	mutex *sync.Mutex
+	start []byte
+	it    *levigo.Iterator
 }
 
 func NewPipe(path string) (*Pipe, error) {
@@ -36,7 +38,7 @@ func NewPipe(path string) (*Pipe, error) {
 
 	return &Pipe{
 		db:    db,
-		taken: make(map[[]byte]struct{}),
+		taken: make(map[uint64]struct{}),
 		mutex: &sync.Mutex{},
 		it:    db.NewIterator(ro),
 	}, nil
@@ -48,8 +50,10 @@ func (p *Pipe) Close() {
 
 func (p *Pipe) Put() Put {
 	return Put{
-		p: p,
-		b: levigo.NewWriteBatch(),
+		p:     p,
+		b:     levigo.NewWriteBatch(),
+		puts:  make(map[uint64]struct{}),
+		first: 0,
 	}
 }
 
@@ -57,7 +61,7 @@ func (p *Pipe) Take() Take {
 	return Take{
 		p:     p,
 		b:     levigo.NewWriteBatch(),
-		taken: make(map[[]byte]struct{}),
+		taken: make(map[uint64]struct{}),
 		mutex: &sync.Mutex{},
 	}
 }
@@ -68,19 +72,30 @@ func (p *Pipe) take() (k, v []byte, err error) {
 
 func (p *Pipe) mark(k []byte) {
 	p.mutex.Lock()
-	p.taken[b] = struct{}{}
 	defer p.mutex.Unlock()
+	id, err := binary.Uvarint(k)
+	if err != nil {
+		log.Fatalln("couldn't translate key to uint64:", err)
+	}
+	p.taken[id] = struct{}{}
 }
 
 func (p *Pipe) unmark(k []byte) {
 	p.mutex.Lock()
-	delete(p.taken[b])
 	defer p.mutex.Unlock()
+	id, err := binary.Uvarint(k)
+	if err != nil {
+		log.Fatalln("couldn't translate key to uint64:", err)
+	}
+	delete(p.taken, id)
 }
 
 type Put struct {
-	p *Pipe
-	b *levigo.WriteBatch
+	p     *Pipe
+	b     *levigo.WriteBatch
+	puts  map[uint64]struct{}
+	first uint64
+	mutex *sync.Mutex
 }
 
 // Put inserts the data into the pipe.
@@ -90,8 +105,13 @@ func (p *Put) Put(v []byte) error {
 		return err
 	}
 	k := make([]byte, 16)
-	binary.PutUvarint(k, id)
 	p.b.Put(k, v)
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.puts[id] = struct{}{}
+	if p.first == 0 || id < p.first {
+		p.first = id
+	}
 	return nil
 }
 
@@ -117,7 +137,7 @@ func (p *Put) Discard() error {
 type Take struct {
 	p     *Pipe
 	b     *levigo.WriteBatch
-	taken map[[]byte]struct{}
+	taken map[uint64]struct{}
 	mutex *sync.Mutex
 }
 
@@ -130,9 +150,9 @@ func (t *Take) Take() ([]byte, error) {
 func (t *Take) Commit() error {
 	wo := levigo.NewWriteOptions()
 	defer wo.Close()
-	err := p.p.db.Write(wo, p.b)
+	err := t.p.db.Write(wo, t.b)
 	for k := range t.taken {
-		t.db.Unflag(k)
+		t.p.Unflag(k)
 	}
 	return err
 }
@@ -140,14 +160,14 @@ func (t *Take) Commit() error {
 // Rollback returns the items to the queue.
 func (t *Take) Rollback() error {
 	for k := range t.taken {
-		t.db.Unflag(k)
+		t.p.Unflag(k)
 	}
 	return nil
 }
 
 // Close closes the transaction.
 func (t *Take) Close() error {
-	p.b.Close()
+	t.b.Close()
 	return nil
 }
 
