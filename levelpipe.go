@@ -20,7 +20,7 @@ func (p Uint64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 func (p Uint64Slice) Sort()              { sort.Sort(p) }
 func (p Uint64Slice) Search(v uint64) int {
 	return sort.Search(len(p), func(i int) bool {
-		return p[i] == v
+		return p[i] >= v
 	})
 }
 
@@ -34,10 +34,12 @@ func init() {
 
 type Pipe struct {
 	db    *levigo.DB
-	taken map[uint64]struct{}
 	mutex *sync.Mutex
-	keys  []uint64
-	first uint64
+	sync  bool
+	// ids is the set of all keys in the pipe
+	ids []uint64
+	// taken is the set of keys currently in a taken transaction
+	taken map[uint64]struct{}
 }
 
 // DestroyPipe destroys the pipe at the given path.
@@ -64,14 +66,15 @@ func open(path string, create bool) (*Pipe, error) {
 	}
 	pipe := &Pipe{
 		db:    db,
-		taken: make(map[uint64]struct{}),
 		mutex: &sync.Mutex{},
-		keys:  make([]uint64, 0),
+		ids:   make([]uint64, 0),
+		taken: make(map[uint64]struct{}),
 	}
 	pipe.init()
 	return pipe, nil
 }
 
+// init populates the pipe with all the IDs in the database.
 func (p *Pipe) init() {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
@@ -83,9 +86,12 @@ func (p *Pipe) init() {
 		if n <= 0 {
 			log.Fatalln("couldn't parse key to ID", it.Key())
 		}
-		p.keys = append(p.keys, id)
+		p.ids = append(p.ids, id)
 	}
-	Uint64Slice(p.keys).Sort()
+}
+
+func (p *Pipe) SetSync(sync bool) {
+	p.sync = sync
 }
 
 func (p *Pipe) findFirstKey() uint64 {
@@ -108,43 +114,71 @@ func (p *Pipe) Close() {
 	p.db.Close()
 }
 
-func (p *Pipe) Put() Put {
-	return Put{
-		p:     p,
-		b:     levigo.NewWriteBatch(),
-		mutex: &sync.Mutex{},
+func (p *Pipe) Put() *Put {
+	return &Put{
+		pipe:  p,
 		puts:  make(map[uint64]struct{}),
-		first: 0,
+		mutex: &sync.Mutex{},
 	}
 }
 
-func (p *Pipe) put(ids ...uint64) {
-	p.keys = append(p.keys, ids...)
-	Uint64Slice(p.keys).Sort()
+// add remembers the given entry IDs in the pipe
+func (p *Pipe) add(ids ...uint64) {
+	p.ids = append(p.ids, ids...)
+	Uint64Slice(p.ids).Sort()
 }
 
-func (p *Pipe) take(ids ...uint64) {
+// remove forgets the given entry IDs from the pipe
+func (p *Pipe) remove(ids ...uint64) {
 	for _, id := range ids {
-		pos := Uint64Slice(p.keys).Search(id)
-		if len(p.keys) > pos {
-			p.keys = append(p.keys[:pos], p.keys[pos+1:]...)
+		pos := Uint64Slice(p.ids).Search(id)
+		if len(p.ids) > pos {
+			p.ids = append(p.ids[:pos], p.ids[pos+1:]...)
 		} else {
-			p.keys = p.keys[:pos]
+			p.ids = p.ids[:pos]
 		}
 	}
 }
 
-func (p *Pipe) Take() Take {
-	ro := levigo.NewReadOptions()
-	return Take{
-		p:     p,
-		b:     levigo.NewWriteBatch(),
+func (p *Pipe) Take() *Take {
+	return &Take{
+		pipe:  p,
 		taken: make(map[uint64]struct{}),
 		mutex: &sync.Mutex{},
-		it:    p.db.NewIterator(ro),
 	}
 }
 
+// take takes a single element
+func (p *Pipe) take() (id uint64, k []byte, v []byte, err error) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	// find first likely available key
+	k = p.firstKey()
+	if k == nil {
+		return 0, nil, nil, nil
+	}
+
+	// retrieve value
+	ro := levigo.NewReadOptions()
+	v, err = p.db.Get(ro, k)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+
+	// key => id
+	id, n := binary.Uvarint(k)
+	if n <= 0 {
+		log.Fatalln("couldn't parse key: " + string(k))
+	}
+
+	// mark as taken
+	p.mark(id)
+
+	return id, k, v, nil
+}
+
+// Clear removes all entries in the db
 func (p *Pipe) Clear() error {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
@@ -156,13 +190,13 @@ func (p *Pipe) Clear() error {
 	}
 	wo := levigo.NewWriteOptions()
 	defer wo.Close()
-	wo.SetSync(true)
+	wo.SetSync(p.sync)
 	return p.db.Write(wo, b)
 }
 
 // firstKey returns the first available key for taking
 func (p *Pipe) firstKey() []byte {
-	for _, id := range p.keys {
+	for _, id := range p.ids {
 		if _, ok := p.taken[id]; !ok {
 			k := make([]byte, 16)
 			if binary.PutUvarint(k, id) <= 0 {
@@ -176,132 +210,151 @@ func (p *Pipe) firstKey() []byte {
 
 // mark sets the 'taken' flag for an entry ID, preventing further takes.
 func (p *Pipe) mark(k uint64) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
 	p.taken[k] = struct{}{}
 }
 
 // unmark clears the 'taken' flag for an entry ID, making it available to be
 // taken.
 func (p *Pipe) unmark(id uint64) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
 	delete(p.taken, id)
 }
 
 type Put struct {
-	p     *Pipe
-	b     *levigo.WriteBatch
+	pipe  *Pipe
+	batch *levigo.WriteBatch
 	puts  map[uint64]struct{}
-	first uint64
 	mutex *sync.Mutex
 }
 
 // Put inserts the data into the pipe.
-func (p *Put) Put(v []byte) error {
+func (put *Put) Put(v []byte) error {
+	// get entry ID
 	id, err := snow.Next()
 	if err != nil {
 		return err
 	}
+
+	// ID => key
 	k := make([]byte, 16)
 	if binary.PutUvarint(k, id) <= 0 {
 		log.Fatalln("couldn't write key")
 	}
-	p.b.Put(k, v)
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.puts[id] = struct{}{}
-	if p.first == 0 || id < p.first {
-		p.first = id
+
+	put.mutex.Lock()
+	defer put.mutex.Unlock()
+
+	// insert into batch
+	if put.batch == nil {
+		put.batch = levigo.NewWriteBatch()
 	}
+	put.batch.Put(k, v)
+
+	// mark as put
+	put.pipe.mutex.Lock()
+	defer put.pipe.mutex.Unlock()
+	put.puts[id] = struct{}{}
+
 	return nil
 }
 
 // Close removes all data stored in the Put and prevents further use.
-func (p *Put) Close() {
-	p.b.Close()
+func (put *Put) Close() {
+	if put.batch != nil {
+		put.mutex.Lock()
+		defer put.mutex.Unlock()
+		put.batch.Close()
+		put.batch = nil
+	}
 }
 
 // Commit writes the data stored within the Put to disk.
-func (p *Put) Commit() error {
+func (put *Put) Commit() error {
+	put.mutex.Lock()
+	defer put.mutex.Unlock()
 	wo := levigo.NewWriteOptions()
 	defer wo.Close()
-	wo.SetSync(true)
-	err := p.p.db.Write(wo, p.b)
-	for id := range p.puts {
-		p.p.put(id)
+	wo.SetSync(put.pipe.sync)
+	err := put.pipe.db.Write(wo, put.batch)
+	for id := range put.puts {
+		put.pipe.add(id)
 	}
+	put.batch = nil
 	return err
 }
 
 // Discard removes all data from the Put.
-func (p *Put) Discard() error {
-	p.b.Clear()
+func (put *Put) Discard() error {
+	if put.batch != nil {
+		put.batch.Clear()
+		put.batch = nil
+	}
 	return nil
 }
 
 type Take struct {
-	p     *Pipe
-	b     *levigo.WriteBatch
+	pipe  *Pipe
+	batch *levigo.WriteBatch
 	taken map[uint64]struct{}
 	mutex *sync.Mutex
-	it    *levigo.Iterator
 }
 
 // Take gets an item from the pipe.
-func (t *Take) Take() ([]byte, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	if firstKey := t.p.firstKey(); firstKey != nil {
-		t.it.Seek(firstKey)
-	} else {
-		t.it.SeekToFirst()
+func (take *Take) Take() ([]byte, error) {
+	id, k, v, err := take.pipe.take()
+	if err != nil {
+		return v, err
 	}
-	m := 0
-	for t.it.Valid() {
-		m++
-		k := t.it.Key()
-		v := t.it.Value()
-		id, n := binary.Uvarint(k)
-		if n <= 0 {
-			log.Fatalln("couldn't parse key: " + string(k))
-		}
-		if _, ok := t.p.taken[id]; !ok {
-			t.p.mark(id)
-			t.b.Delete(k)
-			return v, nil
-		}
-		t.taken[id] = struct{}{}
-		t.it.Next()
+	if id == 0 {
+		return nil, nil
 	}
-	return nil, nil
+	take.mutex.Lock()
+	defer take.mutex.Unlock()
+	if take.batch == nil {
+		take.batch = levigo.NewWriteBatch()
+	}
+	take.taken[id] = struct{}{}
+	take.batch.Delete(k)
+	return v, err
 }
 
 // Commit removes the taken items from the pipe.
-func (t *Take) Commit() error {
+func (take *Take) Commit() error {
 	wo := levigo.NewWriteOptions()
 	defer wo.Close()
-	wo.SetSync(true)
-	err := t.p.db.Write(wo, t.b)
-	for k := range t.taken {
-		t.p.unmark(k)
-		t.p.take(k)
+	wo.SetSync(take.pipe.sync)
+	take.mutex.Lock()
+	defer take.mutex.Unlock()
+	err := take.pipe.db.Write(wo, take.batch)
+	if err != nil {
+		return err
 	}
-	t.taken = make(map[uint64]struct{})
-	return err
+	for k := range take.taken {
+		take.pipe.unmark(k)
+		take.pipe.remove(k)
+	}
+	take.taken = make(map[uint64]struct{})
+	return nil
 }
 
-// Rollback returns the items to the queue.
-func (t *Take) Rollback() error {
-	for k := range t.taken {
-		t.p.unmark(k)
+// Discard returns the items to the queue.
+func (take *Take) Discard() error {
+	take.mutex.Lock()
+	defer take.mutex.Unlock()
+	for k := range take.taken {
+		take.pipe.unmark(k)
 	}
+	take.batch = nil
 	return nil
 }
 
 // Close closes the transaction.
-func (t *Take) Close() error {
-	t.b.Close()
+func (take *Take) Close() error {
+	if take.batch != nil {
+		take.mutex.Lock()
+		defer take.mutex.Unlock()
+		take.batch.Clear()
+		take.batch = nil
+	}
 	return nil
 }
 
@@ -315,6 +368,6 @@ type Putter interface {
 type Taker interface {
 	Take() ([]byte, error)
 	Commit() error
-	Rollback() error
+	Discard() error
 	Close() error
 }

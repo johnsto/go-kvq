@@ -1,15 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"log"
 	"strconv"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPipe(t *testing.T) {
+func TestPipeSingle(t *testing.T) {
 	err := DestroyPipe("pipe.db")
 	p, err := NewPipe("pipe.db")
 	if err != nil {
@@ -62,49 +62,94 @@ func TestPipeMulti(t *testing.T) {
 		log.Fatalln(err)
 	}
 
-	inDone := false
-	inGroup := &sync.WaitGroup{}
-	outGroup := &sync.WaitGroup{}
+	tx := p.Put()
+	defer tx.Close()
+	tx.Put([]byte("a"))
+	tx.Put([]byte("b"))
+	tx.Put([]byte("c"))
+	tx.Commit()
 
-	for i := 0; i < 5; i++ {
-		inGroup.Add(1)
-		go func() {
-			tx := p.Put()
-			for i := 0; i < 100; i++ {
-				s := strconv.Itoa(i)
-				err := tx.Put([]byte(s))
-				assert.Nil(t, err)
-			}
-			tx.Commit()
-			inGroup.Done()
-		}()
-	}
+	rxA := p.Take()
+	defer rxA.Close()
+	vA, errA := rxA.Take()
+	assert.Nil(t, errA)
+	assert.NotNil(t, vA)
+	rxB := p.Take()
+	defer rxB.Close()
+	vB, errB := rxB.Take()
+	assert.Nil(t, errB)
+	assert.NotNil(t, vB)
+	rxC := p.Take()
+	defer rxC.Close()
+	vC, errC := rxC.Take()
+	assert.Nil(t, errC)
+	assert.NotNil(t, vC)
 
-	for i := 0; i < 5; i++ {
-		outGroup.Add(1)
-		go func() {
-			for {
-				rx := p.Take()
-				v, err := rx.Take()
-				assert.Nil(t, err)
-				if inDone && v == nil {
-					break
-				}
-				rx.Commit()
-			}
-			outGroup.Done()
-		}()
-	}
+	assert.Condition(t, func() bool {
+		return !bytes.Equal(vA, vB) && !bytes.Equal(vB, vC)
+	}, "each taken value should be different")
 
-	inGroup.Wait()
-	inDone = true
-	outGroup.Wait()
+}
 
-	// Verify there are no more items in the queue
-	rx := p.Take()
+// TestPutDiscard tests that entries put into a transaction and then discarded
+// are not persisted.
+func TestPutDiscard(t *testing.T) {
+	DestroyPipe("test.db")
+
+	pipe, err := NewPipe("test.db")
+	defer pipe.Close()
+	assert.Nil(t, err)
+
+	// Put an entry into a transaction, but discard it
+	tx := pipe.Put()
+	assert.Nil(t, tx.Put([]byte("test")))
+	tx.Discard()
+
+	// Read an entry from pipe and ensure nothing is received
+	rx := pipe.Take()
 	v, err := rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
+	rx.Discard()
+}
+
+func TestTakeDiscard(t *testing.T) {
+	var err error
+
+	DestroyPipe("test.db")
+
+	pipe, err := NewPipe("test.db")
+	defer pipe.Close()
+	assert.Nil(t, err)
+
+	// Put an entry into a transaction
+	tx := pipe.Put()
+	assert.Nil(t, tx.Put([]byte("test")))
+	tx.Commit()
+	tx.Close()
+
+	var rx *Take
+	var v []byte
+
+	rx = pipe.Take()
+	v, err = rx.Take()
+	assert.Nil(t, err)
+	assert.Equal(t, []byte("test"), v)
+	rx.Discard()
+	rx.Close()
+
+	rx = pipe.Take()
+	v, err = rx.Take()
+	assert.Nil(t, err)
+	assert.Equal(t, []byte("test"), v)
+	rx.Commit()
+	rx.Close()
+
+	rx = pipe.Take()
+	v, err = rx.Take()
+	assert.Nil(t, err)
+	assert.Nil(t, v)
+	rx.Close()
 }
 
 func BenchmarkWrite(b *testing.B) {
@@ -114,13 +159,28 @@ func BenchmarkWrite(b *testing.B) {
 	defer func() {
 		p.Close()
 	}()
+	benchmarkWrite(b, p)
+}
+
+func BenchmarkWriteSync(b *testing.B) {
+	DestroyPipe("benchmark.db")
+	p, err := NewPipe("benchmark.db")
+	assert.Nil(b, err)
+	defer func() {
+		p.Close()
+	}()
+	p.SetSync(true)
+	benchmarkWrite(b, p)
+}
+
+func benchmarkWrite(b *testing.B, p *Pipe) {
 	b.ResetTimer()
-	tx := p.Put()
 	for i := 0; i < b.N; i++ {
+		tx := p.Put()
 		s := strconv.Itoa(i)
 		tx.Put([]byte(s))
+		tx.Commit()
 	}
-	tx.Commit()
 	b.StopTimer()
 }
 
@@ -131,6 +191,10 @@ func BenchmarkRead(b *testing.B) {
 	defer func() {
 		p.Close()
 	}()
+	benchmarkRead(b, p)
+}
+
+func benchmarkRead(b *testing.B, p *Pipe) {
 	tx := p.Put()
 	for i := 0; i < b.N; i++ {
 		s := strconv.Itoa(i)
