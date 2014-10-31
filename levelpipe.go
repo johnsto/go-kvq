@@ -124,6 +124,8 @@ func (p *Pipe) Put() *Put {
 
 // add remembers the given entry IDs in the pipe
 func (p *Pipe) add(ids ...uint64) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	p.ids = append(p.ids, ids...)
 	Uint64Slice(p.ids).Sort()
 }
@@ -269,6 +271,9 @@ func (put *Put) Close() {
 
 // Commit writes the data stored within the Put to disk.
 func (put *Put) Commit() error {
+	if len(put.puts) == 0 {
+		return nil
+	}
 	put.mutex.Lock()
 	defer put.mutex.Unlock()
 	wo := levigo.NewWriteOptions()
@@ -279,6 +284,7 @@ func (put *Put) Commit() error {
 		put.pipe.add(id)
 	}
 	put.batch = nil
+	put.puts = make(map[uint64]struct{})
 	return err
 }
 
@@ -287,6 +293,7 @@ func (put *Put) Discard() error {
 	if put.batch != nil {
 		put.batch.Clear()
 		put.batch = nil
+		put.puts = make(map[uint64]struct{})
 	}
 	return nil
 }
@@ -319,6 +326,9 @@ func (take *Take) Take() ([]byte, error) {
 
 // Commit removes the taken items from the pipe.
 func (take *Take) Commit() error {
+	if len(take.taken) == 0 {
+		return nil
+	}
 	wo := levigo.NewWriteOptions()
 	defer wo.Close()
 	wo.SetSync(take.pipe.sync)
@@ -328,22 +338,29 @@ func (take *Take) Commit() error {
 	if err != nil {
 		return err
 	}
+	take.pipe.mutex.Lock()
+	defer take.pipe.mutex.Unlock()
 	for k := range take.taken {
 		take.pipe.unmark(k)
 		take.pipe.remove(k)
 	}
+	take.batch = nil
 	take.taken = make(map[uint64]struct{})
 	return nil
 }
 
 // Discard returns the items to the queue.
 func (take *Take) Discard() error {
+	if len(take.taken) == 0 {
+		return nil
+	}
 	take.mutex.Lock()
 	defer take.mutex.Unlock()
 	for k := range take.taken {
 		take.pipe.unmark(k)
 	}
 	take.batch = nil
+	take.taken = make(map[uint64]struct{})
 	return nil
 }
 

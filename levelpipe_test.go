@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"log"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -89,6 +91,83 @@ func TestPipeMulti(t *testing.T) {
 		return !bytes.Equal(vA, vB) && !bytes.Equal(vB, vC)
 	}, "each taken value should be different")
 
+}
+
+func TestPipeThreaded(t *testing.T) {
+	err := DestroyPipe("pipe.db")
+	p, err := NewPipe("pipe.db")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer func() {
+		p.Close()
+	}()
+	if err := p.Clear(); err != nil {
+		log.Fatalln(err)
+	}
+
+	routines := 10
+	n := 10000
+
+	inp := make(chan string)
+	outp := make(chan string)
+	active := true
+	wg := &sync.WaitGroup{}
+
+	for i := 0; i < routines; i++ {
+		wg.Add(1)
+		go func() {
+			m := 0
+			for s := range inp {
+				tx := p.Put()
+				tx.Put([]byte(s))
+				tx.Commit()
+				tx.Close()
+				m++
+			}
+			log.Printf("Put %d\n", m)
+			wg.Done()
+		}()
+
+		wg.Add(1)
+		go func() {
+			m := 0
+			for active {
+				rx := p.Take()
+				v, err := rx.Take()
+				assert.NoError(t, err)
+				if v == nil {
+					time.Sleep(50 * time.Millisecond)
+				} else {
+					m++
+					outp <- string(v)
+					rx.Commit()
+				}
+				rx.Close()
+			}
+			log.Printf("Took %d\n", m)
+			wg.Done()
+		}()
+	}
+
+	m := make(map[string]bool)
+
+	for i := 0; i < n; i++ {
+		s := strconv.Itoa(i)
+		m[s] = true
+		inp <- s
+	}
+	close(inp)
+
+	for i := 0; i < n; i++ {
+		s := <-outp
+		assert.True(t, m[s])
+		m[s] = false
+	}
+	close(outp)
+
+	active = false
+	wg.Wait()
 }
 
 // TestPutDiscard tests that entries put into a transaction and then discarded
