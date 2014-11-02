@@ -86,6 +86,7 @@ func (p *Pipe) Close() {
 	p.db.Close()
 }
 
+// Transaction starts a new transaction.
 func (p *Pipe) Transaction() *Txn {
 	return &Txn{
 		pipe:  p,
@@ -183,6 +184,10 @@ func (p *Pipe) Clear() error {
 
 // Put inserts the data into the pipe.
 func (txn *Txn) Put(v []byte) error {
+	if v == nil {
+		return nil
+	}
+
 	// get entry ID
 	id := NewID()
 
@@ -209,6 +214,7 @@ func (txn *Txn) Take() ([]byte, error) {
 	return txn.TakeWait(0)
 }
 
+// Take gets an item from the pipe, waiting at most `t` before returning nil.
 func (txn *Txn) TakeWait(t time.Duration) ([]byte, error) {
 	id, k, v, err := txn.pipe.take(t)
 	if err != nil {
