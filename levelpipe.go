@@ -14,6 +14,19 @@ type Pipe struct {
 	ids   *IDHeap
 }
 
+type Txn struct {
+	pipe  *Pipe
+	batch *levigo.WriteBatch
+	ids   *IDHeap
+	mutex *sync.Mutex
+}
+
+// Put encapsulates a put transaction on a pipe.
+type Put Txn
+
+// Take encapsulates a take transaction on a pipe.
+type Take Txn
+
 // DestroyPipe destroys the pipe at the given path.
 func DestroyPipe(path string) error {
 	return levigo.DestroyDatabase(path, levigo.NewOptions())
@@ -156,14 +169,6 @@ func (p *Pipe) Clear() error {
 	return p.db.Write(wo, b)
 }
 
-// Put encapsulates a put transaction on a pipe.
-type Put struct {
-	pipe  *Pipe
-	batch *levigo.WriteBatch
-	ids   *IDHeap
-	mutex *sync.Mutex
-}
-
 // Put inserts the data into the pipe.
 func (put *Put) Put(v []byte) error {
 	// get entry ID
@@ -226,14 +231,6 @@ func (put *Put) Discard() error {
 		put.ids = NewIDHeap()
 	}
 	return nil
-}
-
-// Take encapsulates a take transaction on a pipe.
-type Take struct {
-	pipe  *Pipe
-	batch *levigo.WriteBatch
-	ids   *IDHeap
-	mutex *sync.Mutex
 }
 
 // Take gets an item from the pipe.
