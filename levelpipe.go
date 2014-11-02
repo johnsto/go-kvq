@@ -1,58 +1,11 @@
 package levelpipe
 
 import (
-	"container/heap"
-	"encoding/binary"
 	"log"
 	"sync"
 
 	"github.com/jmhodges/levigo"
-	"github.com/sdming/gosnow"
 )
-
-var snow *gosnow.SnowFlake
-
-type IDHeap []uint64
-
-func (h IDHeap) Len() int           { return len(h) }
-func (h IDHeap) Less(i, j int) bool { return h[i] < h[j] }
-func (h IDHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *IDHeap) Push(x interface{}) {
-	*h = append(*h, x.(uint64))
-}
-func (h *IDHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-func (h *IDHeap) PopID() uint64 {
-	if len(*h) == 0 {
-		return 0
-	}
-	id := heap.Pop(h)
-	if id == nil {
-		return 0
-	}
-	return id.(uint64)
-}
-func (h *IDHeap) PushID(id uint64) {
-	heap.Push(h, id)
-}
-func NewIDHeap() *IDHeap {
-	h := &IDHeap{}
-	heap.Init(h)
-	return h
-}
-
-func init() {
-	var err error
-	snow, err = gosnow.Default()
-	if err != nil {
-		log.Fatalln(err)
-	}
-}
 
 type Pipe struct {
 	db    *levigo.DB
@@ -102,9 +55,9 @@ func (p *Pipe) init() {
 
 	it.SeekToFirst()
 	if it.Valid() {
-		id, n := binary.Uvarint(it.Key())
-		if n <= 0 {
-			log.Fatalln("couldn't parse key to ID", it.Key())
+		id, err := KeyToID(it.Key())
+		if err != nil {
+			log.Fatalln(err)
 		}
 		p.ids.PushID(id)
 	}
@@ -112,7 +65,7 @@ func (p *Pipe) init() {
 
 // SetSync specifies if the LevelDB database should be sync'd to disk before
 // returning from any commit operations. Set this to true for increased
-// data durability at the cost of commit performance.
+// data durability at the cost of transaction commit time.
 func (p *Pipe) SetSync(sync bool) {
 	p.sync = sync
 }
@@ -142,7 +95,7 @@ func (p *Pipe) Take() *Take {
 
 // putKeys adds the ID(s) to the pipe, indicating entries that are immediately
 // available for taking.
-func (p *Pipe) putKey(ids ...uint64) {
+func (p *Pipe) putKey(ids ...ID) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	for _, id := range ids {
@@ -156,42 +109,32 @@ func (p *Pipe) getKey() []byte {
 	defer p.mutex.Unlock()
 
 	id := p.ids.PopID()
-	if id == 0 {
+	if id == NilID {
 		return nil
 	}
 
-	k := make([]byte, 16)
-	if binary.PutUvarint(k, id) <= 0 {
-		log.Fatalln("couldn't write key")
-	}
-	return k
+	return id.Key()
 }
 
 // take takes a single element
-func (p *Pipe) take() (id uint64, k []byte, v []byte, err error) {
+func (p *Pipe) take() (id ID, k []byte, v []byte, err error) {
 	// get next availble key
 	k = p.getKey()
 	if k == nil {
-		return 0, nil, nil, nil
+		return NilID, nil, nil, nil
 	}
 
 	// retrieve value
 	ro := levigo.NewReadOptions()
 	v, err = p.db.Get(ro, k)
 	if err != nil {
-		return 0, nil, nil, err
+		return NilID, nil, nil, err
 	}
 
 	// key => id
-	id, n := binary.Uvarint(k)
-	if n <= 0 {
-		log.Fatalln("couldn't parse key: " + string(k))
-	}
+	id, err = KeyToID(k)
 
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	return id, k, v, nil
+	return id, k, v, err
 }
 
 // Clear removes all entries in the db
@@ -224,16 +167,10 @@ type Put struct {
 // Put inserts the data into the pipe.
 func (put *Put) Put(v []byte) error {
 	// get entry ID
-	id, err := snow.Next()
-	if err != nil {
-		return err
-	}
+	id := NewID()
 
 	// ID => key
-	k := make([]byte, 16)
-	if binary.PutUvarint(k, id) <= 0 {
-		log.Fatalln("couldn't write key")
-	}
+	k := id.Key()
 
 	put.mutex.Lock()
 	defer put.mutex.Unlock()
@@ -305,7 +242,7 @@ func (take *Take) Take() ([]byte, error) {
 	if err != nil {
 		return v, err
 	}
-	if id == 0 {
+	if id == NilID {
 		return nil, nil
 	}
 
