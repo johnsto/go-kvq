@@ -10,22 +10,17 @@ import (
 type Pipe struct {
 	db    *levigo.DB
 	mutex *sync.Mutex
-	sync  bool
-	ids   *IDHeap
+	ids   *IDHeap // IDs in pipe
+	sync  bool    // true if transactions should be synced
 }
 
 type Txn struct {
 	pipe  *Pipe
 	batch *levigo.WriteBatch
-	ids   *IDHeap
+	puts  *IDHeap // IDs to put
+	takes *IDHeap // IDs being taken
 	mutex *sync.Mutex
 }
-
-// Put encapsulates a put transaction on a pipe.
-type Put Txn
-
-// Take encapsulates a take transaction on a pipe.
-type Take Txn
 
 // DestroyPipe destroys the pipe at the given path.
 func DestroyPipe(path string) error {
@@ -88,20 +83,11 @@ func (p *Pipe) Close() {
 	p.db.Close()
 }
 
-// Put starts a new put transaction on the pipe.
-func (p *Pipe) Put() *Put {
-	return &Put{
+func (p *Pipe) Transaction() *Txn {
+	return &Txn{
 		pipe:  p,
-		ids:   NewIDHeap(),
-		mutex: &sync.Mutex{},
-	}
-}
-
-// Take starts a new take transaction on the pipe.
-func (p *Pipe) Take() *Take {
-	return &Take{
-		pipe:  p,
-		ids:   NewIDHeap(),
+		puts:  NewIDHeap(),
+		takes: NewIDHeap(),
 		mutex: &sync.Mutex{},
 	}
 }
@@ -170,72 +156,31 @@ func (p *Pipe) Clear() error {
 }
 
 // Put inserts the data into the pipe.
-func (put *Put) Put(v []byte) error {
+func (txn *Txn) Put(v []byte) error {
 	// get entry ID
 	id := NewID()
 
 	// ID => key
 	k := id.Key()
 
-	put.mutex.Lock()
-	defer put.mutex.Unlock()
+	txn.mutex.Lock()
+	defer txn.mutex.Unlock()
 
 	// insert into batch
-	if put.batch == nil {
-		put.batch = levigo.NewWriteBatch()
+	if txn.batch == nil {
+		txn.batch = levigo.NewWriteBatch()
 	}
-	put.batch.Put(k, v)
+	txn.batch.Put(k, v)
 
 	// mark as put
-	put.ids.Push(id)
+	txn.puts.Push(id)
 
-	return nil
-}
-
-// Close removes all data stored in the Put and prevents further use.
-func (put *Put) Close() {
-	if put.batch != nil {
-		put.mutex.Lock()
-		defer put.mutex.Unlock()
-		put.batch.Close()
-		put.batch = nil
-	}
-}
-
-// Commit writes the data stored within the Put to disk.
-func (put *Put) Commit() error {
-	if len(*put.ids) == 0 {
-		return nil
-	}
-
-	put.mutex.Lock()
-	defer put.mutex.Unlock()
-
-	wo := levigo.NewWriteOptions()
-	wo.SetSync(put.pipe.sync)
-	defer wo.Close()
-	err := put.pipe.db.Write(wo, put.batch)
-
-	put.pipe.putKey(*put.ids...)
-	put.batch = nil
-	put.ids = NewIDHeap()
-
-	return err
-}
-
-// Discard removes all data from the Put.
-func (put *Put) Discard() error {
-	if put.batch != nil {
-		put.batch.Clear()
-		put.batch = nil
-		put.ids = NewIDHeap()
-	}
 	return nil
 }
 
 // Take gets an item from the pipe.
-func (take *Take) Take() ([]byte, error) {
-	id, k, v, err := take.pipe.take()
+func (txn *Txn) Take() ([]byte, error) {
+	id, k, v, err := txn.pipe.take()
 	if err != nil {
 		return v, err
 	}
@@ -243,67 +188,59 @@ func (take *Take) Take() ([]byte, error) {
 		return nil, nil
 	}
 
-	take.mutex.Lock()
-	defer take.mutex.Unlock()
+	txn.mutex.Lock()
+	defer txn.mutex.Unlock()
 
-	if take.batch == nil {
-		take.batch = levigo.NewWriteBatch()
+	if txn.batch == nil {
+		txn.batch = levigo.NewWriteBatch()
 	}
 
-	take.ids.Push(id)
-	take.batch.Delete(k)
+	txn.takes.Push(id)
+	txn.batch.Delete(k)
 
 	return v, err
 }
 
-// Commit removes the taken items from the pipe.
-func (take *Take) Commit() error {
-	if len(*take.ids) == 0 {
+// Commit writes the transaction to disk.
+func (txn *Txn) Commit() error {
+	txn.mutex.Lock()
+	defer txn.mutex.Unlock()
+
+	if len(*txn.puts) == 0 && len(*txn.takes) == 0 {
 		return nil
 	}
-
-	take.mutex.Lock()
-	defer take.mutex.Unlock()
 
 	wo := levigo.NewWriteOptions()
-	wo.SetSync(take.pipe.sync)
+	wo.SetSync(txn.pipe.sync)
 	defer wo.Close()
+	err := txn.pipe.db.Write(wo, txn.batch)
 
-	err := take.pipe.db.Write(wo, take.batch)
-	if err != nil {
-		return err
-	}
+	txn.pipe.putKey(*txn.puts...)
+	txn.batch = nil
+	txn.puts = NewIDHeap()
+	txn.takes = NewIDHeap()
 
-	take.batch = nil
-	take.ids = NewIDHeap()
-
-	return nil
+	return err
 }
 
-// Discard returns the items to the queue.
-func (take *Take) Discard() error {
-	if len(*take.ids) == 0 {
+// Close reverts all changes from the transaction and releases any held
+// resources.
+func (txn *Txn) Close() error {
+	if len(*txn.puts) == 0 && len(*txn.takes) == 0 {
 		return nil
 	}
 
-	take.mutex.Lock()
-	defer take.mutex.Unlock()
+	if txn.batch != nil {
+		txn.mutex.Lock()
+		defer txn.mutex.Unlock()
 
-	take.pipe.putKey(*take.ids...)
-	take.batch = nil
-	take.ids = NewIDHeap()
+		// return taken ids to the pipe
+		txn.pipe.putKey(*txn.takes...)
 
-	return nil
-}
-
-// Close closes the transaction.
-func (take *Take) Close() error {
-	if take.batch != nil {
-		take.mutex.Lock()
-		defer take.mutex.Unlock()
-		take.batch.Clear()
-		take.batch = nil
-		take.ids = NewIDHeap()
+		txn.batch.Clear()
+		txn.batch = nil
+		txn.puts = NewIDHeap()
+		txn.takes = NewIDHeap()
 	}
 	return nil
 }

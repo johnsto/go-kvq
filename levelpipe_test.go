@@ -26,7 +26,8 @@ func TestPipeSingle(t *testing.T) {
 
 	keys := make(map[string]bool)
 
-	tx := p.Put()
+	tx := p.Transaction()
+	defer tx.Close()
 	for i := 0; i < 100; i++ {
 		s := strconv.Itoa(i)
 		tx.Put([]byte(s))
@@ -34,7 +35,8 @@ func TestPipeSingle(t *testing.T) {
 	}
 	tx.Commit()
 
-	rx := p.Take()
+	rx := p.Transaction()
+	defer rx.Close()
 	for len(keys) != 0 {
 		v, err := rx.Take()
 		assert.NoError(t, err)
@@ -45,7 +47,8 @@ func TestPipeSingle(t *testing.T) {
 	rx.Commit()
 
 	// Verify there are no more items in the queue
-	rx = p.Take()
+	rx = p.Transaction()
+	defer rx.Close()
 	v, err := rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
@@ -64,24 +67,24 @@ func TestPipeMulti(t *testing.T) {
 		log.Fatalln(err)
 	}
 
-	tx := p.Put()
+	tx := p.Transaction()
 	defer tx.Close()
 	tx.Put([]byte("a"))
 	tx.Put([]byte("b"))
 	tx.Put([]byte("c"))
 	tx.Commit()
 
-	rxA := p.Take()
+	rxA := p.Transaction()
 	defer rxA.Close()
 	vA, errA := rxA.Take()
 	assert.Nil(t, errA)
 	assert.NotNil(t, vA)
-	rxB := p.Take()
+	rxB := p.Transaction()
 	defer rxB.Close()
 	vB, errB := rxB.Take()
 	assert.Nil(t, errB)
 	assert.NotNil(t, vB)
-	rxC := p.Take()
+	rxC := p.Transaction()
 	defer rxC.Close()
 	vC, errC := rxC.Take()
 	assert.Nil(t, errC)
@@ -120,10 +123,10 @@ func TestPipeThreaded(t *testing.T) {
 		go func() {
 			m := 0
 			for s := range inp {
-				tx := p.Put()
+				tx := p.Transaction()
+				defer tx.Close()
 				tx.Put([]byte(s))
 				tx.Commit()
-				tx.Close()
 				m++
 			}
 			wg.Done()
@@ -134,7 +137,8 @@ func TestPipeThreaded(t *testing.T) {
 		go func() {
 			m := 0
 			for active {
-				rx := p.Take()
+				rx := p.Transaction()
+				defer rx.Close()
 				v, err := rx.Take()
 				assert.NoError(t, err)
 				if v == nil {
@@ -187,16 +191,16 @@ func TestPutDiscard(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Put an entry into a transaction, but discard it
-	tx := pipe.Put()
+	tx := pipe.Transaction()
 	assert.Nil(t, tx.Put([]byte("test")))
-	tx.Discard()
+	tx.Close()
 
 	// Read an entry from pipe and ensure nothing is received
-	rx := pipe.Take()
+	rx := pipe.Transaction()
 	v, err := rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
-	rx.Discard()
+	rx.Close()
 }
 
 func TestTakeDiscard(t *testing.T) {
@@ -209,33 +213,32 @@ func TestTakeDiscard(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Put an entry into a transaction
-	tx := pipe.Put()
+	tx := pipe.Transaction()
+	defer tx.Close()
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Commit()
-	tx.Close()
 
-	var rx *Take
+	var rx *Txn
 	var v []byte
 
-	rx = pipe.Take()
+	rx = pipe.Transaction()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("test"), v)
-	rx.Discard()
 	rx.Close()
 
-	rx = pipe.Take()
+	rx = pipe.Transaction()
+	rx.Close()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Commit()
-	rx.Close()
 
-	rx = pipe.Take()
+	rx = pipe.Transaction()
+	defer rx.Close()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
-	rx.Close()
 }
 
 func BenchmarkWrite(b *testing.B) {
@@ -262,7 +265,8 @@ func BenchmarkWriteSync(b *testing.B) {
 func benchmarkWrite(b *testing.B, p *Pipe) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx := p.Put()
+		tx := p.Transaction()
+		defer tx.Close()
 		s := strconv.Itoa(i)
 		tx.Put([]byte(s))
 		tx.Commit()
@@ -281,7 +285,8 @@ func BenchmarkRead(b *testing.B) {
 }
 
 func benchmarkRead(b *testing.B, p *Pipe) {
-	tx := p.Put()
+	tx := p.Transaction()
+	defer tx.Close()
 	for i := 0; i < b.N; i++ {
 		s := strconv.Itoa(i)
 		if err := tx.Put([]byte(s)); err != nil {
@@ -290,7 +295,8 @@ func benchmarkRead(b *testing.B, p *Pipe) {
 	}
 	tx.Commit()
 	b.ResetTimer()
-	rx := p.Take()
+	rx := p.Transaction()
+	defer rx.Close()
 	for {
 		v, err := rx.Take()
 		if err != nil {
