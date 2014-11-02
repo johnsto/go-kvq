@@ -106,8 +106,8 @@ func TestPipeThreaded(t *testing.T) {
 		log.Fatalln(err)
 	}
 
-	routines := 10
-	n := 10000
+	routines := 4
+	n := 1000
 
 	inp := make(chan string)
 	outp := make(chan string)
@@ -115,6 +115,7 @@ func TestPipeThreaded(t *testing.T) {
 	wg := &sync.WaitGroup{}
 
 	for i := 0; i < routines; i++ {
+		// Fill pipe with items from input channel
 		wg.Add(1)
 		go func() {
 			m := 0
@@ -125,10 +126,10 @@ func TestPipeThreaded(t *testing.T) {
 				tx.Close()
 				m++
 			}
-			log.Printf("Put %d\n", m)
 			wg.Done()
 		}()
 
+		// Pull items from pipe and put into output channel
 		wg.Add(1)
 		go func() {
 			m := 0
@@ -145,10 +146,11 @@ func TestPipeThreaded(t *testing.T) {
 				}
 				rx.Close()
 			}
-			log.Printf("Took %d\n", m)
 			wg.Done()
 		}()
 	}
+
+	// Ensure num items put into input queue is same as output queue
 
 	m := make(map[string]bool)
 
@@ -163,6 +165,11 @@ func TestPipeThreaded(t *testing.T) {
 		s := <-outp
 		assert.True(t, m[s])
 		m[s] = false
+	}
+	select {
+	case <-outp:
+		assert.Fail(t, "items left in queue!")
+	default:
 	}
 	close(outp)
 
