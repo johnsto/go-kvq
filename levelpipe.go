@@ -3,6 +3,7 @@ package levelpipe
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/jmhodges/levigo"
 )
@@ -12,6 +13,7 @@ type Pipe struct {
 	mutex *sync.Mutex
 	ids   *IDHeap // IDs in pipe
 	sync  bool    // true if transactions should be synced
+	c     chan struct{}
 }
 
 type Txn struct {
@@ -48,6 +50,7 @@ func open(path string, create bool) (*Pipe, error) {
 		db:    db,
 		mutex: &sync.Mutex{},
 		ids:   NewIDHeap(),
+		c:     make(chan struct{}, 1e6),
 	}
 	pipe.init()
 	return pipe, nil
@@ -99,26 +102,49 @@ func (p *Pipe) putKey(ids ...ID) {
 	defer p.mutex.Unlock()
 	for _, id := range ids {
 		p.ids.PushID(id)
+		p.c <- struct{}{}
 	}
 }
 
 // getKey returns the first available key for taking
-func (p *Pipe) getKey() []byte {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+func (p *Pipe) getKey(t time.Duration) []byte {
+	select {
+	case <-p.c:
+		p.mutex.Lock()
+		defer p.mutex.Unlock()
+		return p.ids.PopID().Key()
+	default:
+		if t == 0 {
+			return nil
+		} else {
+			return p.awaitKey(t)
+		}
+	}
+}
 
-	id := p.ids.PopID()
-	if id == NilID {
+// awaitKey returns the first available key for taking within the given time
+// window
+func (p *Pipe) awaitKey(t time.Duration) []byte {
+	cancel := make(chan struct{}, 0)
+	timeout := time.AfterFunc(t, func() {
+		close(cancel)
+	})
+	defer timeout.Stop()
+
+	select {
+	case <-p.c:
+		p.mutex.Lock()
+		defer p.mutex.Unlock()
+		return p.ids.PopID().Key()
+	case <-cancel:
 		return nil
 	}
-
-	return id.Key()
 }
 
 // take takes a single element
-func (p *Pipe) take() (id ID, k []byte, v []byte, err error) {
+func (p *Pipe) take(t time.Duration) (id ID, k []byte, v []byte, err error) {
 	// get next availble key
-	k = p.getKey()
+	k = p.getKey(t)
 	if k == nil {
 		return NilID, nil, nil, nil
 	}
@@ -180,7 +206,11 @@ func (txn *Txn) Put(v []byte) error {
 
 // Take gets an item from the pipe.
 func (txn *Txn) Take() ([]byte, error) {
-	id, k, v, err := txn.pipe.take()
+	return txn.TakeWait(0)
+}
+
+func (txn *Txn) TakeWait(t time.Duration) ([]byte, error) {
+	id, k, v, err := txn.pipe.take(t)
 	if err != nil {
 		return v, err
 	}

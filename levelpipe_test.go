@@ -1,7 +1,6 @@
 package levelpipe
 
 import (
-	"bytes"
 	"log"
 	"strconv"
 	"sync"
@@ -67,33 +66,23 @@ func TestPipeMulti(t *testing.T) {
 		log.Fatalln(err)
 	}
 
+	exps := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+
 	tx := p.Transaction()
 	defer tx.Close()
-	tx.Put([]byte("a"))
-	tx.Put([]byte("b"))
-	tx.Put([]byte("c"))
+	for _, b := range exps {
+		tx.Put(b)
+	}
 	tx.Commit()
 
-	rxA := p.Transaction()
-	defer rxA.Close()
-	vA, errA := rxA.Take()
-	assert.Nil(t, errA)
-	assert.NotNil(t, vA)
-	rxB := p.Transaction()
-	defer rxB.Close()
-	vB, errB := rxB.Take()
-	assert.Nil(t, errB)
-	assert.NotNil(t, vB)
-	rxC := p.Transaction()
-	defer rxC.Close()
-	vC, errC := rxC.Take()
-	assert.Nil(t, errC)
-	assert.NotNil(t, vC)
-
-	assert.Condition(t, func() bool {
-		return !bytes.Equal(vA, vB) && !bytes.Equal(vB, vC)
-	}, "each taken value should be different")
-
+	exps = append(exps, nil)
+	for _, exp := range exps {
+		rx := p.Transaction()
+		defer rx.Close()
+		act, err := rx.Take()
+		assert.Nil(t, err)
+		assert.Equal(t, exp, act)
+	}
 }
 
 func TestPipeThreaded(t *testing.T) {
