@@ -6,21 +6,22 @@ import (
 	"time"
 
 	"github.com/jmhodges/levigo"
+	"github.com/johnsto/leviq/internal"
 )
 
 type Queue struct {
 	db    *levigo.DB
 	mutex *sync.Mutex
-	ids   *IDHeap // IDs in queue
-	sync  bool    // true if transactions should be synced
+	ids   *internal.IDHeap // IDs in queue
+	sync  bool             // true if transactions should be synced
 	c     chan struct{}
 }
 
 type Txn struct {
 	queue *Queue
 	batch *levigo.WriteBatch
-	puts  *IDHeap // IDs to put
-	takes *IDHeap // IDs being taken
+	puts  *internal.IDHeap // IDs to put
+	takes *internal.IDHeap // IDs being taken
 	mutex *sync.Mutex
 }
 
@@ -43,7 +44,7 @@ func Open(path string, opts *levigo.Options) (*Queue, error) {
 	queue := &Queue{
 		db:    db,
 		mutex: &sync.Mutex{},
-		ids:   NewIDHeap(),
+		ids:   internal.NewIDHeap(),
 		c:     make(chan struct{}, 1e6),
 	}
 	queue.init()
@@ -60,7 +61,7 @@ func (p *Queue) init() {
 
 	it.SeekToFirst()
 	if it.Valid() {
-		id, err := KeyToID(it.Key())
+		id, err := internal.KeyToID(it.Key())
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -104,15 +105,15 @@ func (p *Queue) Close() {
 func (p *Queue) Transaction() *Txn {
 	return &Txn{
 		queue: p,
-		puts:  NewIDHeap(),
-		takes: NewIDHeap(),
+		puts:  internal.NewIDHeap(),
+		takes: internal.NewIDHeap(),
 		mutex: &sync.Mutex{},
 	}
 }
 
 // putKeys adds the ID(s) to the queue, indicating entries that are immediately
 // available for taking.
-func (p *Queue) putKey(ids ...ID) {
+func (p *Queue) putKey(ids ...internal.ID) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	for _, id := range ids {
@@ -160,22 +161,22 @@ func (p *Queue) awaitKey(t time.Duration) []byte {
 }
 
 // take takes a single element.
-func (p *Queue) take(t time.Duration) (id ID, k []byte, v []byte, err error) {
+func (p *Queue) take(t time.Duration) (id internal.ID, k []byte, v []byte, err error) {
 	// get next available key
 	k = p.getKey(t)
 	if k == nil {
-		return NilID, nil, nil, nil
+		return internal.NilID, nil, nil, nil
 	}
 
 	// retrieve value
 	ro := levigo.NewReadOptions()
 	v, err = p.db.Get(ro, k)
 	if err != nil {
-		return NilID, nil, nil, err
+		return internal.NilID, nil, nil, err
 	}
 
 	// key => id
-	id, err = KeyToID(k)
+	id, err = internal.KeyToID(k)
 
 	return id, k, v, err
 }
@@ -187,7 +188,7 @@ func (txn *Txn) Put(v []byte) error {
 	}
 
 	// get entry ID
-	id := NewID()
+	id := internal.NewID()
 
 	// ID => key
 	k := id.Key()
@@ -218,7 +219,7 @@ func (txn *Txn) TakeWait(t time.Duration) ([]byte, error) {
 	if err != nil {
 		return v, err
 	}
-	if id == NilID {
+	if id == internal.NilID {
 		return nil, nil
 	}
 
@@ -251,8 +252,8 @@ func (txn *Txn) Commit() error {
 
 	txn.queue.putKey(*txn.puts...)
 	txn.batch = nil
-	txn.puts = NewIDHeap()
-	txn.takes = NewIDHeap()
+	txn.puts = internal.NewIDHeap()
+	txn.takes = internal.NewIDHeap()
 
 	return err
 }
@@ -273,8 +274,8 @@ func (txn *Txn) Close() error {
 
 		txn.batch.Clear()
 		txn.batch = nil
-		txn.puts = NewIDHeap()
-		txn.takes = NewIDHeap()
+		txn.puts = internal.NewIDHeap()
+		txn.takes = internal.NewIDHeap()
 	}
 	return nil
 }

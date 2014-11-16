@@ -1,4 +1,4 @@
-package leviq
+package internal
 
 import (
 	"container/heap"

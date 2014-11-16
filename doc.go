@@ -53,4 +53,4 @@ rough events/sec measurement.
 [1] https://github.com/jmhodges/levigo
 
 */
-package leviq
+package leviq // import "github.com/johnsto/leviq"
