@@ -1,4 +1,4 @@
-package levelpipe
+package leviq
 
 import (
 	"container/heap"

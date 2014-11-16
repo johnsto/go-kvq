@@ -1,4 +1,4 @@
-package levelpipe
+package leviq
 
 import (
 	"log"
@@ -8,56 +8,56 @@ import (
 	"github.com/jmhodges/levigo"
 )
 
-type Pipe struct {
+type Queue struct {
 	db    *levigo.DB
 	mutex *sync.Mutex
-	ids   *IDHeap // IDs in pipe
+	ids   *IDHeap // IDs in queue
 	sync  bool    // true if transactions should be synced
 	c     chan struct{}
 }
 
 type Txn struct {
-	pipe  *Pipe
+	queue *Queue
 	batch *levigo.WriteBatch
 	puts  *IDHeap // IDs to put
 	takes *IDHeap // IDs being taken
 	mutex *sync.Mutex
 }
 
-// DestroyPipe destroys the pipe at the given path.
-func DestroyPipe(path string) error {
+// DestroyQueue destroys the queue at the given path.
+func DestroyQueue(path string) error {
 	return levigo.DestroyDatabase(path, levigo.NewOptions())
 }
 
-// NewPipe creates a new pipe at the given path.
-func NewPipe(path string) (*Pipe, error) {
+// NewQueue creates a new queue at the given path.
+func NewQueue(path string) (*Queue, error) {
 	return open(path, true)
 }
 
-// OpenPipe opens the pipe at the given path.
-func OpenPipe(path string) (*Pipe, error) {
+// OpenQueue opens the queue at the given path.
+func OpenQueue(path string) (*Queue, error) {
 	return open(path, false)
 }
 
-func open(path string, create bool) (*Pipe, error) {
+func open(path string, create bool) (*Queue, error) {
 	opts := levigo.NewOptions()
 	opts.SetCreateIfMissing(create)
 	db, err := levigo.Open(path, opts)
 	if err != nil {
 		return nil, err
 	}
-	pipe := &Pipe{
+	queue := &Queue{
 		db:    db,
 		mutex: &sync.Mutex{},
 		ids:   NewIDHeap(),
 		c:     make(chan struct{}, 1e6),
 	}
-	pipe.init()
-	return pipe, nil
+	queue.init()
+	return queue, nil
 }
 
-// init populates the pipe with all the IDs in the database.
-func (p *Pipe) init() {
+// init populates the queue with all the IDs from the saved database.
+func (p *Queue) init() {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 
@@ -77,28 +77,48 @@ func (p *Pipe) init() {
 // SetSync specifies if the LevelDB database should be sync'd to disk before
 // returning from any commit operations. Set this to true for increased
 // data durability at the cost of transaction commit time.
-func (p *Pipe) SetSync(sync bool) {
+func (p *Queue) SetSync(sync bool) {
 	p.sync = sync
 }
 
-// Close closes the pipe.
-func (p *Pipe) Close() {
+// Clear removes all entries in the DB. Do not call if any transactions are in
+// progress.
+func (p *Queue) Clear() error {
+	ro := levigo.NewReadOptions()
+	defer ro.Close()
+
+	b := levigo.NewWriteBatch()
+	it := p.db.NewIterator(ro)
+	it.SeekToFirst()
+	for it.Valid() {
+		b.Delete(it.Key())
+	}
+
+	wo := levigo.NewWriteOptions()
+	wo.SetSync(p.sync)
+	defer wo.Close()
+
+	return p.db.Write(wo, b)
+}
+
+// Close closes the queue.
+func (p *Queue) Close() {
 	p.db.Close()
 }
 
 // Transaction starts a new transaction.
-func (p *Pipe) Transaction() *Txn {
+func (p *Queue) Transaction() *Txn {
 	return &Txn{
-		pipe:  p,
+		queue: p,
 		puts:  NewIDHeap(),
 		takes: NewIDHeap(),
 		mutex: &sync.Mutex{},
 	}
 }
 
-// putKeys adds the ID(s) to the pipe, indicating entries that are immediately
+// putKeys adds the ID(s) to the queue, indicating entries that are immediately
 // available for taking.
-func (p *Pipe) putKey(ids ...ID) {
+func (p *Queue) putKey(ids ...ID) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	for _, id := range ids {
@@ -107,8 +127,10 @@ func (p *Pipe) putKey(ids ...ID) {
 	}
 }
 
-// getKey returns the first available key for taking
-func (p *Pipe) getKey(t time.Duration) []byte {
+// getKey finds the first key available for taking, removes it from the set of
+// keys and returns it to the caller. If the duration argument is greater than
+// 0, it will wait the prescribed time for a key to arrive before returning nil.
+func (p *Queue) getKey(t time.Duration) []byte {
 	select {
 	case <-p.c:
 		p.mutex.Lock()
@@ -123,9 +145,10 @@ func (p *Pipe) getKey(t time.Duration) []byte {
 	}
 }
 
-// awaitKey returns the first available key for taking within the given time
-// window
-func (p *Pipe) awaitKey(t time.Duration) []byte {
+// awaitKey finds the first key available for taking, removes it from the set
+// of keys and returns it to the caller, waiting at most the specified amount
+// of time for a key to become available before before returning nil.
+func (p *Queue) awaitKey(t time.Duration) []byte {
 	cancel := make(chan struct{}, 0)
 	timeout := time.AfterFunc(t, func() {
 		close(cancel)
@@ -142,9 +165,9 @@ func (p *Pipe) awaitKey(t time.Duration) []byte {
 	}
 }
 
-// take takes a single element
-func (p *Pipe) take(t time.Duration) (id ID, k []byte, v []byte, err error) {
-	// get next availble key
+// take takes a single element.
+func (p *Queue) take(t time.Duration) (id ID, k []byte, v []byte, err error) {
+	// get next available key
 	k = p.getKey(t)
 	if k == nil {
 		return NilID, nil, nil, nil
@@ -163,26 +186,7 @@ func (p *Pipe) take(t time.Duration) (id ID, k []byte, v []byte, err error) {
 	return id, k, v, err
 }
 
-// Clear removes all entries in the db
-func (p *Pipe) Clear() error {
-	ro := levigo.NewReadOptions()
-	defer ro.Close()
-
-	b := levigo.NewWriteBatch()
-	it := p.db.NewIterator(ro)
-	it.SeekToFirst()
-	for it.Valid() {
-		b.Delete(it.Key())
-	}
-
-	wo := levigo.NewWriteOptions()
-	wo.SetSync(p.sync)
-	defer wo.Close()
-
-	return p.db.Write(wo, b)
-}
-
-// Put inserts the data into the pipe.
+// Put inserts the data into the queue.
 func (txn *Txn) Put(v []byte) error {
 	if v == nil {
 		return nil
@@ -209,14 +213,14 @@ func (txn *Txn) Put(v []byte) error {
 	return nil
 }
 
-// Take gets an item from the pipe.
+// Take gets an item from the queue.
 func (txn *Txn) Take() ([]byte, error) {
 	return txn.TakeWait(0)
 }
 
-// Take gets an item from the pipe, waiting at most `t` before returning nil.
+// Take gets an item from the queue, waiting at most `t` before returning nil.
 func (txn *Txn) TakeWait(t time.Duration) ([]byte, error) {
-	id, k, v, err := txn.pipe.take(t)
+	id, k, v, err := txn.queue.take(t)
 	if err != nil {
 		return v, err
 	}
@@ -247,11 +251,11 @@ func (txn *Txn) Commit() error {
 	}
 
 	wo := levigo.NewWriteOptions()
-	wo.SetSync(txn.pipe.sync)
+	wo.SetSync(txn.queue.sync)
 	defer wo.Close()
-	err := txn.pipe.db.Write(wo, txn.batch)
+	err := txn.queue.db.Write(wo, txn.batch)
 
-	txn.pipe.putKey(*txn.puts...)
+	txn.queue.putKey(*txn.puts...)
 	txn.batch = nil
 	txn.puts = NewIDHeap()
 	txn.takes = NewIDHeap()
@@ -270,8 +274,8 @@ func (txn *Txn) Close() error {
 		txn.mutex.Lock()
 		defer txn.mutex.Unlock()
 
-		// return taken ids to the pipe
-		txn.pipe.putKey(*txn.takes...)
+		// return taken ids to the queue
+		txn.queue.putKey(*txn.takes...)
 
 		txn.batch.Clear()
 		txn.batch = nil

@@ -1,4 +1,4 @@
-package levelpipe
+package leviq
 
 import (
 	"log"
@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPipeSingle(t *testing.T) {
-	err := DestroyPipe("pipe.db")
-	p, err := NewPipe("pipe.db")
+func TestQueueSingle(t *testing.T) {
+	err := DestroyQueue("queue.db")
+	p, err := NewQueue("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -53,9 +53,9 @@ func TestPipeSingle(t *testing.T) {
 	assert.Nil(t, v)
 }
 
-func TestPipeMulti(t *testing.T) {
-	err := DestroyPipe("pipe.db")
-	p, err := NewPipe("pipe.db")
+func TestQueueMulti(t *testing.T) {
+	err := DestroyQueue("queue.db")
+	p, err := NewQueue("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -85,9 +85,9 @@ func TestPipeMulti(t *testing.T) {
 	}
 }
 
-func TestPipeThreaded(t *testing.T) {
-	err := DestroyPipe("pipe.db")
-	p, err := NewPipe("pipe.db")
+func TestQueueThreaded(t *testing.T) {
+	err := DestroyQueue("queue.db")
+	p, err := NewQueue("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -107,7 +107,7 @@ func TestPipeThreaded(t *testing.T) {
 	wg := &sync.WaitGroup{}
 
 	for i := 0; i < routines; i++ {
-		// Fill pipe with items from input channel
+		// Fill queue with items from input channel
 		wg.Add(1)
 		go func() {
 			m := 0
@@ -121,7 +121,7 @@ func TestPipeThreaded(t *testing.T) {
 			wg.Done()
 		}()
 
-		// Pull items from pipe and put into output channel
+		// Pull items from queue and put into output channel
 		wg.Add(1)
 		go func() {
 			m := 0
@@ -173,19 +173,19 @@ func TestPipeThreaded(t *testing.T) {
 // TestPutDiscard tests that entries put into a transaction and then discarded
 // are not persisted.
 func TestPutDiscard(t *testing.T) {
-	DestroyPipe("test.db")
+	DestroyQueue("test.db")
 
-	pipe, err := NewPipe("test.db")
-	defer pipe.Close()
+	queue, err := NewQueue("test.db")
+	defer queue.Close()
 	assert.Nil(t, err)
 
 	// Put an entry into a transaction, but discard it
-	tx := pipe.Transaction()
+	tx := queue.Transaction()
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Close()
 
-	// Read an entry from pipe and ensure nothing is received
-	rx := pipe.Transaction()
+	// Read an entry from queue and ensure nothing is received
+	rx := queue.Transaction()
 	v, err := rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
@@ -195,14 +195,14 @@ func TestPutDiscard(t *testing.T) {
 func TestTakeDiscard(t *testing.T) {
 	var err error
 
-	DestroyPipe("test.db")
+	DestroyQueue("test.db")
 
-	pipe, err := NewPipe("test.db")
-	defer pipe.Close()
+	queue, err := NewQueue("test.db")
+	defer queue.Close()
 	assert.Nil(t, err)
 
 	// Put an entry into a transaction
-	tx := pipe.Transaction()
+	tx := queue.Transaction()
 	defer tx.Close()
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Commit()
@@ -210,20 +210,20 @@ func TestTakeDiscard(t *testing.T) {
 	var rx *Txn
 	var v []byte
 
-	rx = pipe.Transaction()
+	rx = queue.Transaction()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Close()
 
-	rx = pipe.Transaction()
+	rx = queue.Transaction()
 	rx.Close()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Commit()
 
-	rx = pipe.Transaction()
+	rx = queue.Transaction()
 	defer rx.Close()
 	v, err = rx.Take()
 	assert.Nil(t, err)
@@ -231,8 +231,8 @@ func TestTakeDiscard(t *testing.T) {
 }
 
 func BenchmarkWrite(b *testing.B) {
-	DestroyPipe("benchmark.db")
-	p, err := NewPipe("benchmark.db")
+	DestroyQueue("benchmark.db")
+	p, err := NewQueue("benchmark.db")
 	assert.Nil(b, err)
 	defer func() {
 		p.Close()
@@ -241,8 +241,8 @@ func BenchmarkWrite(b *testing.B) {
 }
 
 func BenchmarkWriteSync(b *testing.B) {
-	DestroyPipe("benchmark.db")
-	p, err := NewPipe("benchmark.db")
+	DestroyQueue("benchmark.db")
+	p, err := NewQueue("benchmark.db")
 	assert.Nil(b, err)
 	defer func() {
 		p.Close()
@@ -251,7 +251,7 @@ func BenchmarkWriteSync(b *testing.B) {
 	benchmarkWrite(b, p)
 }
 
-func benchmarkWrite(b *testing.B, p *Pipe) {
+func benchmarkWrite(b *testing.B, p *Queue) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tx := p.Transaction()
@@ -264,8 +264,8 @@ func benchmarkWrite(b *testing.B, p *Pipe) {
 }
 
 func BenchmarkRead(b *testing.B) {
-	DestroyPipe("benchmark.db")
-	p, err := NewPipe("benchmark.db")
+	DestroyQueue("benchmark.db")
+	p, err := NewQueue("benchmark.db")
 	assert.Nil(b, err)
 	defer func() {
 		p.Close()
@@ -273,7 +273,7 @@ func BenchmarkRead(b *testing.B) {
 	benchmarkRead(b, p)
 }
 
-func benchmarkRead(b *testing.B, p *Pipe) {
+func benchmarkRead(b *testing.B, p *Queue) {
 	tx := p.Transaction()
 	defer tx.Close()
 	for i := 0; i < b.N; i++ {
