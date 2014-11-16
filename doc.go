@@ -1,7 +1,7 @@
 /*
 
-Package leviq provides a transactional, disk-backed queue built on top of
-LevelDB, using levigo [1].
+Package leviq provides a transactional, LevelDB-backed queue, built on top of
+levigo [1] and gosnow [2].
 
 leviq.Open opens and creates queues.
 
@@ -51,6 +51,7 @@ in Go's benchmarking parlance, therefore making it easy to convert to a very
 rough events/sec measurement.
 
 [1] https://github.com/jmhodges/levigo
+[2] https://github.com/sdming/gosnow
 
 */
 package leviq // import "github.com/johnsto/leviq"
