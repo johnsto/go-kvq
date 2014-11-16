@@ -1,7 +1,7 @@
 /*
 
 Package leviq provides a transactional, LevelDB-backed queue, built on top of
-levigo [1] and gosnow [2].
+levigo (https://github.com/jmhodges/levigo) and gosnow (https://github.com/sdming/gosnow).
 
 leviq.Open opens and creates queues.
 
@@ -49,9 +49,6 @@ benchmarks (note the disparity between Sync and non-Sync write performance).
 The benchmarks are set up such that each Put or Take constitutes a single 'op'
 in Go's benchmarking parlance, therefore making it easy to convert to a very
 rough events/sec measurement.
-
-[1] https://github.com/jmhodges/levigo
-[2] https://github.com/sdming/gosnow
 
 */
 package leviq // import "github.com/johnsto/leviq"
