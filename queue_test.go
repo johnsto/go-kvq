@@ -11,8 +11,8 @@ import (
 )
 
 func TestQueueSingle(t *testing.T) {
-	err := DestroyQueue("queue.db")
-	p, err := NewQueue("queue.db")
+	err := Destroy("queue.db")
+	p, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -54,8 +54,8 @@ func TestQueueSingle(t *testing.T) {
 }
 
 func TestQueueMulti(t *testing.T) {
-	err := DestroyQueue("queue.db")
-	p, err := NewQueue("queue.db")
+	err := Destroy("queue.db")
+	p, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -86,8 +86,8 @@ func TestQueueMulti(t *testing.T) {
 }
 
 func TestQueueThreaded(t *testing.T) {
-	err := DestroyQueue("queue.db")
-	p, err := NewQueue("queue.db")
+	err := Destroy("queue.db")
+	p, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -173,9 +173,9 @@ func TestQueueThreaded(t *testing.T) {
 // TestPutDiscard tests that entries put into a transaction and then discarded
 // are not persisted.
 func TestPutDiscard(t *testing.T) {
-	DestroyQueue("test.db")
+	Destroy("test.db")
 
-	queue, err := NewQueue("test.db")
+	queue, err := Open("test.db", nil)
 	defer queue.Close()
 	assert.Nil(t, err)
 
@@ -195,9 +195,9 @@ func TestPutDiscard(t *testing.T) {
 func TestTakeDiscard(t *testing.T) {
 	var err error
 
-	DestroyQueue("test.db")
+	Destroy("test.db")
 
-	queue, err := NewQueue("test.db")
+	queue, err := Open("test.db", nil)
 	defer queue.Close()
 	assert.Nil(t, err)
 
@@ -230,50 +230,72 @@ func TestTakeDiscard(t *testing.T) {
 	assert.Nil(t, v)
 }
 
-func BenchmarkWrite(b *testing.B) {
-	DestroyQueue("benchmark.db")
-	p, err := NewQueue("benchmark.db")
+func BenchmarkPuts1(b *testing.B) {
+	benchmarkPuts(b, 1, false)
+}
+
+func BenchmarkPuts10(b *testing.B) {
+	benchmarkPuts(b, 10, false)
+}
+
+func BenchmarkPuts100(b *testing.B) {
+	benchmarkPuts(b, 100, false)
+}
+
+func BenchmarkPuts1000(b *testing.B) {
+	benchmarkPuts(b, 1000, false)
+}
+
+func BenchmarkPutsSync1(b *testing.B) {
+	benchmarkPuts(b, 1, true)
+}
+
+func BenchmarkPutsSync10(b *testing.B) {
+	benchmarkPuts(b, 10, true)
+}
+
+func BenchmarkPutsSync100(b *testing.B) {
+	benchmarkPuts(b, 100, true)
+}
+
+func BenchmarkPutsSync1000(b *testing.B) {
+	benchmarkPuts(b, 1000, true)
+}
+
+func benchmarkPuts(b *testing.B, n int, sync bool) {
+	Destroy("benchmark.db")
+	p, err := Open("benchmark.db", nil)
 	assert.Nil(b, err)
 	defer func() {
 		p.Close()
 	}()
-	benchmarkWrite(b, p)
-}
+	p.SetSync(sync)
 
-func BenchmarkWriteSync(b *testing.B) {
-	DestroyQueue("benchmark.db")
-	p, err := NewQueue("benchmark.db")
-	assert.Nil(b, err)
-	defer func() {
-		p.Close()
-	}()
-	p.SetSync(true)
-	benchmarkWrite(b, p)
-}
-
-func benchmarkWrite(b *testing.B, p *Queue) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tx := p.Transaction()
 		defer tx.Close()
-		s := strconv.Itoa(i)
-		tx.Put([]byte(s))
+		for j := 0; j < n; j++ {
+			s := strconv.Itoa(i * j)
+			tx.Put([]byte(s))
+			i++
+		}
 		tx.Commit()
 	}
 	b.StopTimer()
 }
 
-func BenchmarkRead(b *testing.B) {
-	DestroyQueue("benchmark.db")
-	p, err := NewQueue("benchmark.db")
+func BenchmarkTake(b *testing.B) {
+	Destroy("benchmark.db")
+	p, err := Open("benchmark.db", nil)
 	assert.Nil(b, err)
 	defer func() {
 		p.Close()
 	}()
-	benchmarkRead(b, p)
+	benchmarkTake(b, p)
 }
 
-func benchmarkRead(b *testing.B, p *Queue) {
+func benchmarkTake(b *testing.B, p *Queue) {
 	tx := p.Transaction()
 	defer tx.Close()
 	for i := 0; i < b.N; i++ {

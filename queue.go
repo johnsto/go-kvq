@@ -24,24 +24,18 @@ type Txn struct {
 	mutex *sync.Mutex
 }
 
-// DestroyQueue destroys the queue at the given path.
-func DestroyQueue(path string) error {
+// Destroy destroys the queue at the given path.
+func Destroy(path string) error {
 	return levigo.DestroyDatabase(path, levigo.NewOptions())
 }
 
-// NewQueue creates a new queue at the given path.
-func NewQueue(path string) (*Queue, error) {
-	return open(path, true)
-}
-
 // OpenQueue opens the queue at the given path.
-func OpenQueue(path string) (*Queue, error) {
-	return open(path, false)
-}
+func Open(path string, opts *levigo.Options) (*Queue, error) {
+	if opts == nil {
+		opts = levigo.NewOptions()
+		opts.SetCreateIfMissing(true)
+	}
 
-func open(path string, create bool) (*Queue, error) {
-	opts := levigo.NewOptions()
-	opts.SetCreateIfMissing(create)
 	db, err := levigo.Open(path, opts)
 	if err != nil {
 		return nil, err
