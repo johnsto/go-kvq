@@ -1,6 +1,7 @@
 package leviq
 
 import (
+	"bytes"
 	"log"
 	"sync"
 	"time"
@@ -9,8 +10,13 @@ import (
 	"github.com/johnsto/leviq/internal"
 )
 
+type DB struct {
+	db *levigo.DB
+}
+
 type Queue struct {
-	db    *levigo.DB
+	ns    []byte
+	db    *DB
 	mutex *sync.Mutex
 	ids   *internal.IDHeap // IDs in queue
 	sync  bool             // true if transactions should be synced
@@ -31,7 +37,7 @@ func Destroy(path string) error {
 }
 
 // OpenQueue opens the queue at the given path.
-func Open(path string, opts *levigo.Options) (*Queue, error) {
+func Open(path string, opts *levigo.Options) (*DB, error) {
 	if opts == nil {
 		opts = levigo.NewOptions()
 		opts.SetCreateIfMissing(true)
@@ -41,31 +47,59 @@ func Open(path string, opts *levigo.Options) (*Queue, error) {
 	if err != nil {
 		return nil, err
 	}
+	return &DB{
+		db: db,
+	}, nil
+}
+
+func (db *DB) Queue(ns string) *Queue {
 	queue := &Queue{
+		ns:    []byte(ns),
 		db:    db,
 		mutex: &sync.Mutex{},
 		ids:   internal.NewIDHeap(),
 		c:     make(chan struct{}, 1e6),
 	}
 	queue.init()
-	return queue, nil
+	return queue
+}
+
+// Close closes the queue.
+func (db *DB) Close() {
+	db.db.Close()
+}
+
+func splitKey(ns, key []byte) (k []byte) {
+	prefix := append(ns, 0)
+	if !bytes.HasPrefix(key, prefix) {
+		return nil
+	}
+	return key[len(ns)+1:]
+}
+
+func joinKey(ns, k []byte) (key []byte) {
+	return bytes.Join([][]byte{ns, k}, []byte{0})
 }
 
 // init populates the queue with all the IDs from the saved database.
-func (p *Queue) init() {
+func (q *Queue) init() {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 
-	it := p.db.NewIterator(ro)
+	it := q.db.db.NewIterator(ro)
 	defer it.Close()
 
-	it.SeekToFirst()
+	it.Seek(q.ns)
 	for it.Valid() {
-		id, err := internal.KeyToID(it.Key())
+		k := splitKey(q.ns, it.Key())
+		if k == nil {
+			break
+		}
+		id, err := internal.KeyToID(k)
 		if err != nil {
 			log.Fatalln(err)
 		}
-		p.ids.PushID(id)
+		q.ids.PushID(id)
 		p.c <- struct{}{}
 		it.Next()
 	}
@@ -74,39 +108,38 @@ func (p *Queue) init() {
 // SetSync specifies if the LevelDB database should be sync'd to disk before
 // returning from any commit operations. Set this to true for increased
 // data durability at the cost of transaction commit time.
-func (p *Queue) SetSync(sync bool) {
-	p.sync = sync
+func (q *Queue) SetSync(sync bool) {
+	q.sync = sync
 }
 
 // Clear removes all entries in the DB. Do not call if any transactions are in
 // progress.
-func (p *Queue) Clear() error {
+func (q *Queue) Clear() error {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 
 	b := levigo.NewWriteBatch()
-	it := p.db.NewIterator(ro)
-	it.SeekToFirst()
+	it := q.db.db.NewIterator(ro)
+	it.Seek(q.ns)
 	for it.Valid() {
+		k := splitKey(q.ns, it.Key())
+		if k == nil {
+			break
+		}
 		b.Delete(it.Key())
 	}
 
 	wo := levigo.NewWriteOptions()
-	wo.SetSync(p.sync)
+	wo.SetSync(q.sync)
 	defer wo.Close()
 
-	return p.db.Write(wo, b)
-}
-
-// Close closes the queue.
-func (p *Queue) Close() {
-	p.db.Close()
+	return q.db.db.Write(wo, b)
 }
 
 // Transaction starts a new transaction.
-func (p *Queue) Transaction() *Txn {
+func (q *Queue) Transaction() *Txn {
 	return &Txn{
-		queue: p,
+		queue: q,
 		puts:  internal.NewIDHeap(),
 		takes: internal.NewIDHeap(),
 		mutex: &sync.Mutex{},
@@ -115,29 +148,29 @@ func (p *Queue) Transaction() *Txn {
 
 // putKeys adds the ID(s) to the queue, indicating entries that are immediately
 // available for taking.
-func (p *Queue) putKey(ids ...internal.ID) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+func (q *Queue) putKey(ids ...internal.ID) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 	for _, id := range ids {
-		p.ids.PushID(id)
-		p.c <- struct{}{}
+		q.ids.PushID(id)
+		q.c <- struct{}{}
 	}
 }
 
 // getKey finds the first key available for taking, removes it from the set of
 // keys and returns it to the caller. If the duration argument is greater than
 // 0, it will wait the prescribed time for a key to arrive before returning nil.
-func (p *Queue) getKey(t time.Duration) []byte {
+func (q *Queue) getKey(t time.Duration) []byte {
 	select {
-	case <-p.c:
-		p.mutex.Lock()
-		defer p.mutex.Unlock()
-		return p.ids.PopID().Key()
+	case <-q.c:
+		q.mutex.Lock()
+		defer q.mutex.Unlock()
+		return q.ids.PopID().Key()
 	default:
 		if t == 0 {
 			return nil
 		} else {
-			return p.awaitKey(t)
+			return q.awaitKey(t)
 		}
 	}
 }
@@ -145,7 +178,7 @@ func (p *Queue) getKey(t time.Duration) []byte {
 // awaitKey finds the first key available for taking, removes it from the set
 // of keys and returns it to the caller, waiting at most the specified amount
 // of time for a key to become available before before returning nil.
-func (p *Queue) awaitKey(t time.Duration) []byte {
+func (q *Queue) awaitKey(t time.Duration) []byte {
 	cancel := make(chan struct{}, 0)
 	timeout := time.AfterFunc(t, func() {
 		close(cancel)
@@ -153,26 +186,27 @@ func (p *Queue) awaitKey(t time.Duration) []byte {
 	defer timeout.Stop()
 
 	select {
-	case <-p.c:
-		p.mutex.Lock()
-		defer p.mutex.Unlock()
-		return p.ids.PopID().Key()
+	case <-q.c:
+		q.mutex.Lock()
+		defer q.mutex.Unlock()
+		return q.ids.PopID().Key()
 	case <-cancel:
 		return nil
 	}
 }
 
 // take takes a single element.
-func (p *Queue) take(t time.Duration) (id internal.ID, k []byte, v []byte, err error) {
+func (q *Queue) take(t time.Duration) (id internal.ID, k []byte, v []byte, err error) {
 	// get next available key
-	k = p.getKey(t)
+	k = q.getKey(t)
 	if k == nil {
 		return internal.NilID, nil, nil, nil
 	}
 
 	// retrieve value
 	ro := levigo.NewReadOptions()
-	v, err = p.db.Get(ro, k)
+	dbk := joinKey(q.ns, k)
+	v, err = q.db.db.Get(ro, dbk)
 	if err != nil {
 		return internal.NilID, nil, nil, err
 	}
@@ -202,7 +236,8 @@ func (txn *Txn) Put(v []byte) error {
 	if txn.batch == nil {
 		txn.batch = levigo.NewWriteBatch()
 	}
-	txn.batch.Put(k, v)
+	dbk := joinKey(txn.queue.ns, k)
+	txn.batch.Put(dbk, v)
 
 	// mark as put
 	txn.puts.Push(id)
@@ -250,7 +285,7 @@ func (txn *Txn) Commit() error {
 	wo := levigo.NewWriteOptions()
 	wo.SetSync(txn.queue.sync)
 	defer wo.Close()
-	err := txn.queue.db.Write(wo, txn.batch)
+	err := txn.queue.db.db.Write(wo, txn.batch)
 
 	txn.queue.putKey(*txn.puts...)
 	txn.batch = nil

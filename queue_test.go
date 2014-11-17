@@ -51,20 +51,19 @@ func TestLoad(t *testing.T) {
 
 func TestQueueSingle(t *testing.T) {
 	err := Destroy("queue.db")
-	p, err := Open("queue.db", nil)
+	db, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer func() {
-		p.Close()
-	}()
-	if err := p.Clear(); err != nil {
+	defer db.Close()
+	q := db.Queue("test")
+	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
 
 	keys := make(map[string]bool)
 
-	tx := p.Transaction()
+	tx := q.Transaction()
 	defer tx.Close()
 	for i := 0; i < 100; i++ {
 		s := strconv.Itoa(i)
@@ -73,7 +72,7 @@ func TestQueueSingle(t *testing.T) {
 	}
 	tx.Commit()
 
-	rx := p.Transaction()
+	rx := q.Transaction()
 	defer rx.Close()
 	for len(keys) != 0 {
 		v, err := rx.Take()
@@ -85,7 +84,7 @@ func TestQueueSingle(t *testing.T) {
 	rx.Commit()
 
 	// Verify there are no more items in the queue
-	rx = p.Transaction()
+	rx = q.Transaction()
 	defer rx.Close()
 	v, err := rx.Take()
 	assert.Nil(t, err)
@@ -94,20 +93,19 @@ func TestQueueSingle(t *testing.T) {
 
 func TestQueueMulti(t *testing.T) {
 	err := Destroy("queue.db")
-	p, err := Open("queue.db", nil)
+	db, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer func() {
-		p.Close()
-	}()
-	if err := p.Clear(); err != nil {
+	defer db.Close()
+	q := db.Queue("test")
+	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
 
 	exps := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
 
-	tx := p.Transaction()
+	tx := q.Transaction()
 	defer tx.Close()
 	for _, b := range exps {
 		tx.Put(b)
@@ -116,7 +114,7 @@ func TestQueueMulti(t *testing.T) {
 
 	exps = append(exps, nil)
 	for _, exp := range exps {
-		rx := p.Transaction()
+		rx := q.Transaction()
 		defer rx.Close()
 		act, err := rx.Take()
 		assert.Nil(t, err)
@@ -126,14 +124,13 @@ func TestQueueMulti(t *testing.T) {
 
 func TestQueueThreaded(t *testing.T) {
 	err := Destroy("queue.db")
-	p, err := Open("queue.db", nil)
+	db, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer func() {
-		p.Close()
-	}()
-	if err := p.Clear(); err != nil {
+	defer db.Close()
+	q := db.Queue("test")
+	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
 
@@ -151,7 +148,7 @@ func TestQueueThreaded(t *testing.T) {
 		go func() {
 			m := 0
 			for s := range inp {
-				tx := p.Transaction()
+				tx := q.Transaction()
 				defer tx.Close()
 				tx.Put([]byte(s))
 				tx.Commit()
@@ -165,7 +162,7 @@ func TestQueueThreaded(t *testing.T) {
 		go func() {
 			m := 0
 			for active {
-				rx := p.Transaction()
+				rx := q.Transaction()
 				defer rx.Close()
 				v, err := rx.Take()
 				assert.NoError(t, err)
@@ -214,17 +211,19 @@ func TestQueueThreaded(t *testing.T) {
 func TestPutDiscard(t *testing.T) {
 	Destroy("test.db")
 
-	queue, err := Open("test.db", nil)
-	defer queue.Close()
+	db, err := Open("test.db", nil)
+	defer db.Close()
 	assert.Nil(t, err)
 
+	q := db.Queue("test")
+
 	// Put an entry into a transaction, but discard it
-	tx := queue.Transaction()
+	tx := q.Transaction()
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Close()
 
 	// Read an entry from queue and ensure nothing is received
-	rx := queue.Transaction()
+	rx := q.Transaction()
 	v, err := rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
@@ -236,12 +235,14 @@ func TestTakeDiscard(t *testing.T) {
 
 	Destroy("test.db")
 
-	queue, err := Open("test.db", nil)
-	defer queue.Close()
+	db, err := Open("test.db", nil)
+	defer db.Close()
 	assert.Nil(t, err)
 
+	q := db.Queue("test")
+
 	// Put an entry into a transaction
-	tx := queue.Transaction()
+	tx := q.Transaction()
 	defer tx.Close()
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Commit()
@@ -249,20 +250,20 @@ func TestTakeDiscard(t *testing.T) {
 	var rx *Txn
 	var v []byte
 
-	rx = queue.Transaction()
+	rx = q.Transaction()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Close()
 
-	rx = queue.Transaction()
+	rx = q.Transaction()
 	rx.Close()
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Commit()
 
-	rx = queue.Transaction()
+	rx = q.Transaction()
 	defer rx.Close()
 	v, err = rx.Take()
 	assert.Nil(t, err)
@@ -303,16 +304,16 @@ func BenchmarkPutsSync1000(b *testing.B) {
 
 func benchmarkPuts(b *testing.B, n int, sync bool) {
 	Destroy("benchmark.db")
-	p, err := Open("benchmark.db", nil)
+	db, err := Open("benchmark.db", nil)
 	assert.Nil(b, err)
-	defer func() {
-		p.Close()
-	}()
-	p.SetSync(sync)
+	defer db.Close()
+
+	q := db.Queue("test")
+	q.SetSync(sync)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx := p.Transaction()
+		tx := q.Transaction()
 		defer tx.Close()
 		for j := 0; j < n; j++ {
 			s := strconv.Itoa(i * j)
@@ -326,16 +327,15 @@ func benchmarkPuts(b *testing.B, n int, sync bool) {
 
 func BenchmarkTake(b *testing.B) {
 	Destroy("benchmark.db")
-	p, err := Open("benchmark.db", nil)
+	db, err := Open("benchmark.db", nil)
 	assert.Nil(b, err)
-	defer func() {
-		p.Close()
-	}()
-	benchmarkTake(b, p)
+	defer db.Close()
+	q := db.Queue("test")
+	benchmarkTake(b, q)
 }
 
-func benchmarkTake(b *testing.B, p *Queue) {
-	tx := p.Transaction()
+func benchmarkTake(b *testing.B, q *Queue) {
+	tx := q.Transaction()
 	defer tx.Close()
 	for i := 0; i < b.N; i++ {
 		s := strconv.Itoa(i)
@@ -345,7 +345,7 @@ func benchmarkTake(b *testing.B, p *Queue) {
 	}
 	tx.Commit()
 	b.ResetTimer()
-	rx := p.Transaction()
+	rx := q.Transaction()
 	defer rx.Close()
 	for {
 		v, err := rx.Take()
