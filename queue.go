@@ -60,12 +60,14 @@ func (p *Queue) init() {
 	defer it.Close()
 
 	it.SeekToFirst()
-	if it.Valid() {
+	for it.Valid() {
 		id, err := internal.KeyToID(it.Key())
 		if err != nil {
 			log.Fatalln(err)
 		}
 		p.ids.PushID(id)
+		p.c <- struct{}{}
+		it.Next()
 	}
 }
 

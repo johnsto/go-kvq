@@ -10,6 +10,45 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestLoad(t *testing.T) {
+	err := Destroy("queue.db")
+
+	q, err := Open("queue.db", nil)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	q.SetSync(true)
+
+	tx := q.Transaction()
+	tx.Put([]byte("a"))
+	tx.Put([]byte("b"))
+	tx.Put([]byte("c"))
+	tx.Commit()
+	tx.Close()
+
+	q.Close()
+
+	q, err = Open("queue.db", nil)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	q.SetSync(true)
+	defer q.Close()
+	tx = q.Transaction()
+	vA, err := tx.Take()
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("a"), vA)
+	vB, err := tx.Take()
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("b"), vB)
+	vC, err := tx.Take()
+	assert.NoError(t, err)
+	assert.Equal(t, []byte("c"), vC)
+	v, err := tx.Take()
+	assert.NoError(t, err)
+	assert.Nil(t, v)
+}
+
 func TestQueueSingle(t *testing.T) {
 	err := Destroy("queue.db")
 	p, err := Open("queue.db", nil)
