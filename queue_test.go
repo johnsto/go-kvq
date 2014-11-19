@@ -10,45 +10,56 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestLoad(t *testing.T) {
+// TestInit ennsures that data are loaded again correctly from disk.
+func TestInit(t *testing.T) {
 	err := Destroy("queue.db")
 
-	q, err := Open("queue.db", nil)
+	// Open initial DB
+	db, err := Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
 	q.SetSync(true)
 
+	table := []string{"a", "b", "c"}
+
+	// Put initial values
 	tx := q.Transaction()
-	tx.Put([]byte("a"))
-	tx.Put([]byte("b"))
-	tx.Put([]byte("c"))
+	for _, value := range table {
+		tx.Put([]byte(value))
+	}
 	tx.Commit()
 	tx.Close()
 
-	q.Close()
-
-	q, err = Open("queue.db", nil)
+	// Re-open DB
+	db.Close()
+	db, err = Open("queue.db", nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
+	defer db.Close()
+
+	q, err = db.Queue("test")
+	assert.Nil(t, err)
 	q.SetSync(true)
-	defer q.Close()
+
+	// Read expected values
 	tx = q.Transaction()
-	vA, err := tx.Take()
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("a"), vA)
-	vB, err := tx.Take()
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("b"), vB)
-	vC, err := tx.Take()
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("c"), vC)
+	for _, value := range table {
+		v, err := tx.Take()
+		assert.NoError(t, err)
+		assert.Equal(t, []byte(value), v)
+	}
+
+	// Ensure  no stragglers
 	v, err := tx.Take()
 	assert.NoError(t, err)
 	assert.Nil(t, v)
 }
 
+// TestQueueSingle tests a batch of puts and takes in a single transaction
 func TestQueueSingle(t *testing.T) {
 	err := Destroy("queue.db")
 	db, err := Open("queue.db", nil)
@@ -56,30 +67,33 @@ func TestQueueSingle(t *testing.T) {
 		log.Fatalln(err)
 	}
 	defer db.Close()
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
 
-	keys := make(map[string]bool)
-
-	tx := q.Transaction()
-	defer tx.Close()
+	// Create test data
+	table := map[string]bool{}
 	for i := 0; i < 100; i++ {
-		s := strconv.Itoa(i)
-		tx.Put([]byte(s))
-		keys[s] = true
+		k := strconv.Itoa(i)
+		table[k] = true
+	}
+
+	// Write data
+	tx := q.Transaction()
+	for k := range table {
+		tx.Put([]byte(k))
 	}
 	tx.Commit()
 
+	// Read data
 	rx := q.Transaction()
-	defer rx.Close()
-	for len(keys) != 0 {
+	for len(table) > 0 {
 		v, err := rx.Take()
 		assert.NoError(t, err)
-		s := string(v)
-		assert.True(t, keys[s])
-		delete(keys, s)
+		assert.True(t, table[string(v)])
+		delete(table, string(v))
 	}
 	rx.Commit()
 
@@ -91,6 +105,7 @@ func TestQueueSingle(t *testing.T) {
 	assert.Nil(t, v)
 }
 
+// TestQueueMulti tests a series of puts/takes in a number of transactions
 func TestQueueMulti(t *testing.T) {
 	err := Destroy("queue.db")
 	db, err := Open("queue.db", nil)
@@ -98,30 +113,67 @@ func TestQueueMulti(t *testing.T) {
 		log.Fatalln(err)
 	}
 	defer db.Close()
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
 
-	exps := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	table := []string{"a", "b", "c"}
 
-	tx := q.Transaction()
-	defer tx.Close()
-	for _, b := range exps {
-		tx.Put(b)
+	// Put values
+	for _, v := range table {
+		tx := q.Transaction()
+		tx.Put([]byte(v))
+		tx.Commit()
 	}
-	tx.Commit()
 
-	exps = append(exps, nil)
-	for _, exp := range exps {
+	// Take values
+	for _, exp := range table {
 		rx := q.Transaction()
-		defer rx.Close()
 		act, err := rx.Take()
 		assert.Nil(t, err)
-		assert.Equal(t, exp, act)
+		assert.Equal(t, exp, string(act))
+		rx.Commit()
 	}
 }
 
+// TestQueueOrdered tests that items come out of the queue in the correct
+// order.
+func TestQueueOrdered(t *testing.T) {
+	err := Destroy("queue.db")
+	db, err := Open("queue.db", nil)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer db.Close()
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
+	if err := q.Clear(); err != nil {
+		log.Fatalln(err)
+	}
+
+	// Put values
+	tx := q.Transaction()
+	for i := byte(0); i < 100; i++ {
+		tx.Put([]byte{i})
+		// Artificial sleep to guarantee new gosnow ID
+		time.Sleep(time.Millisecond * 2)
+	}
+	tx.Commit()
+
+	// Take values
+	rx := q.Transaction()
+	for i := byte(0); i < 100; i++ {
+		act, err := rx.Take()
+		assert.Nil(t, err)
+		assert.Equal(t, []byte{i}, act)
+	}
+	rx.Commit()
+}
+
+// TestQueueThreaded puts and takes items from a number of simultaneous
+// goroutines.
 func TestQueueThreaded(t *testing.T) {
 	err := Destroy("queue.db")
 	db, err := Open("queue.db", nil)
@@ -129,7 +181,8 @@ func TestQueueThreaded(t *testing.T) {
 		log.Fatalln(err)
 	}
 	defer db.Close()
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
@@ -215,7 +268,8 @@ func TestPutDiscard(t *testing.T) {
 	defer db.Close()
 	assert.Nil(t, err)
 
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
 
 	// Put an entry into a transaction, but discard it
 	tx := q.Transaction()
@@ -239,7 +293,8 @@ func TestTakeDiscard(t *testing.T) {
 	defer db.Close()
 	assert.Nil(t, err)
 
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(t, err)
 
 	// Put an entry into a transaction
 	tx := q.Transaction()
@@ -268,6 +323,59 @@ func TestTakeDiscard(t *testing.T) {
 	v, err = rx.Take()
 	assert.Nil(t, err)
 	assert.Nil(t, v)
+}
+
+// TestNamespaces tests that items in disparate namespaces are kept apart.
+func TestNamespaces(t *testing.T) {
+	Destroy("test.db")
+
+	db, err := Open("test.db", nil)
+	defer db.Close()
+	assert.Nil(t, err)
+
+	qa, err := db.Queue("testa")
+	assert.Nil(t, err)
+	qa.SetSync(true)
+	qb, err := db.Queue("testb")
+	assert.Nil(t, err)
+	qb.SetSync(true)
+
+	// Write data to queue A
+	tx := qa.Transaction()
+	tx.Put([]byte("hello"))
+	tx.Commit()
+
+	// Attempt to read from queue B
+	tx = qb.Transaction()
+	v, err := tx.Take()
+	assert.NoError(t, err)
+	assert.Nil(t, v)
+	tx.Close()
+
+	// Write data to queue B
+	tx = qb.Transaction()
+	tx.Put([]byte("world"))
+	tx.Commit()
+
+	// Read from queue A
+	tx = qa.Transaction()
+	v, err = tx.Take()
+	assert.NoError(t, err)
+	assert.Equal(t, "hello", string(v))
+	v, err = tx.Take()
+	assert.NoError(t, err)
+	assert.Nil(t, v)
+	tx.Close()
+
+	// Read from queue B
+	tx = qb.Transaction()
+	v, err = tx.Take()
+	assert.NoError(t, err)
+	assert.Equal(t, "world", string(v))
+	v, err = tx.Take()
+	assert.NoError(t, err)
+	assert.Nil(t, v)
+	tx.Close()
 }
 
 func BenchmarkPuts1(b *testing.B) {
@@ -308,7 +416,8 @@ func benchmarkPuts(b *testing.B, n int, sync bool) {
 	assert.Nil(b, err)
 	defer db.Close()
 
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(b, err)
 	q.SetSync(sync)
 
 	b.ResetTimer()
@@ -325,16 +434,19 @@ func benchmarkPuts(b *testing.B, n int, sync bool) {
 	b.StopTimer()
 }
 
+// BenchmarkTake benchmarks the speed at which items can be taken.
 func BenchmarkTake(b *testing.B) {
 	Destroy("benchmark.db")
 	db, err := Open("benchmark.db", nil)
 	assert.Nil(b, err)
 	defer db.Close()
-	q := db.Queue("test")
+	q, err := db.Queue("test")
+	assert.Nil(b, err)
 	benchmarkTake(b, q)
 }
 
 func benchmarkTake(b *testing.B, q *Queue) {
+	// Seed DB with items to take
 	tx := q.Transaction()
 	defer tx.Close()
 	for i := 0; i < b.N; i++ {
@@ -344,6 +456,8 @@ func benchmarkTake(b *testing.B, q *Queue) {
 		}
 	}
 	tx.Commit()
+
+	// Benchmark removal
 	b.ResetTimer()
 	rx := q.Transaction()
 	defer rx.Close()

@@ -2,7 +2,6 @@ package leviq
 
 import (
 	"bytes"
-	"log"
 	"sync"
 	"time"
 
@@ -10,19 +9,26 @@ import (
 	"github.com/johnsto/leviq/internal"
 )
 
+const (
+	MaxQueue int = 1e6
+)
+
+// DB is little more than a wrapper around a Levigo DB
 type DB struct {
 	db *levigo.DB
 }
 
+// Queue encapsulates a namespaced queue held by a DB.
 type Queue struct {
-	ns    []byte
+	ns    []byte // namespace (key prefix)
 	db    *DB
 	mutex *sync.Mutex
 	ids   *internal.IDHeap // IDs in queue
 	sync  bool             // true if transactions should be synced
-	c     chan struct{}
+	c     chan struct{}    // item availability channel
 }
 
+// Txn represents a transaction on a queue
 type Txn struct {
 	queue *Queue
 	batch *levigo.WriteBatch
@@ -31,12 +37,12 @@ type Txn struct {
 	mutex *sync.Mutex
 }
 
-// Destroy destroys the queue at the given path.
+// Destroy destroys the DB at the given path.
 func Destroy(path string) error {
 	return levigo.DestroyDatabase(path, levigo.NewOptions())
 }
 
-// OpenQueue opens the queue at the given path.
+// Open opens the DB at the given path.
 func Open(path string, opts *levigo.Options) (*DB, error) {
 	if opts == nil {
 		opts = levigo.NewOptions()
@@ -52,16 +58,25 @@ func Open(path string, opts *levigo.Options) (*DB, error) {
 	}, nil
 }
 
-func (db *DB) Queue(ns string) *Queue {
+// Queue opens a queue within the given namespace (key prefix), whereby keys
+// are prefixed with the namespace value and a NUL byte, followed by the
+// ID of the queued item.
+func (db *DB) Queue(namespace string) (*Queue, error) {
+	var ns []byte
+	if namespace != "" {
+		ns = append([]byte(namespace), 0)
+	}
 	queue := &Queue{
-		ns:    []byte(ns),
+		ns:    ns,
 		db:    db,
 		mutex: &sync.Mutex{},
 		ids:   internal.NewIDHeap(),
-		c:     make(chan struct{}, 1e6),
+		c:     make(chan struct{}, MaxQueue),
 	}
-	queue.init()
-	return queue
+	if err := queue.init(); err != nil {
+		return nil, err
+	}
+	return queue, nil
 }
 
 // Close closes the queue.
@@ -69,40 +84,59 @@ func (db *DB) Close() {
 	db.db.Close()
 }
 
+// splitKey deconstructs a DB key into an item key for the given namespace. If
+// the key doesn't match the namespace, nil is returned.
 func splitKey(ns, key []byte) (k []byte) {
-	prefix := append(ns, 0)
-	if !bytes.HasPrefix(key, prefix) {
+	if ns == nil {
+		return key
+	}
+	if !bytes.HasPrefix(key, ns) {
 		return nil
 	}
-	return key[len(ns)+1:]
+	return key[len(ns):]
 }
 
+// joinKey constructs a DB key from a namespace and an item key (by popping a
+// NUL in the middle).
 func joinKey(ns, k []byte) (key []byte) {
-	return bytes.Join([][]byte{ns, k}, []byte{0})
+	if ns == nil {
+		return k
+	}
+	return append(ns[:], k...)
 }
 
 // init populates the queue with all the IDs from the saved database.
-func (q *Queue) init() {
+func (q *Queue) init() error {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 
 	it := q.db.db.NewIterator(ro)
 	defer it.Close()
 
-	it.Seek(q.ns)
+	// Seek to first key within namespace
+	if q.ns == nil {
+		it.SeekToFirst()
+	} else {
+		it.Seek(q.ns)
+	}
+
+	// Populate with read keys
 	for it.Valid() {
 		k := splitKey(q.ns, it.Key())
 		if k == nil {
+			// Key doesn't match namespace => past end
 			break
 		}
 		id, err := internal.KeyToID(k)
 		if err != nil {
-			log.Fatalln(err)
+			return err
 		}
 		q.ids.PushID(id)
-		p.c <- struct{}{}
+		q.c <- struct{}{}
 		it.Next()
 	}
+
+	return nil
 }
 
 // SetSync specifies if the LevelDB database should be sync'd to disk before
@@ -120,7 +154,15 @@ func (q *Queue) Clear() error {
 
 	b := levigo.NewWriteBatch()
 	it := q.db.db.NewIterator(ro)
-	it.Seek(q.ns)
+
+	// Seek to first key within namespace
+	if q.ns == nil {
+		it.SeekToFirst()
+	} else {
+		it.Seek(q.ns)
+	}
+
+	// Delete each key within namespace
 	for it.Valid() {
 		k := splitKey(q.ns, it.Key())
 		if k == nil {
@@ -129,6 +171,7 @@ func (q *Queue) Clear() error {
 		b.Delete(it.Key())
 	}
 
+	// Write to disk
 	wo := levigo.NewWriteOptions()
 	wo.SetSync(q.sync)
 	defer wo.Close()
@@ -136,7 +179,7 @@ func (q *Queue) Clear() error {
 	return q.db.db.Write(wo, b)
 }
 
-// Transaction starts a new transaction.
+// Transaction starts a new transaction on the queue.
 func (q *Queue) Transaction() *Txn {
 	return &Txn{
 		queue: q,
@@ -163,10 +206,12 @@ func (q *Queue) putKey(ids ...internal.ID) {
 func (q *Queue) getKey(t time.Duration) []byte {
 	select {
 	case <-q.c:
+		// Item immediately available
 		q.mutex.Lock()
 		defer q.mutex.Unlock()
 		return q.ids.PopID().Key()
 	default:
+		// Return immediately if user specified no timeout, otherwise wait
 		if t == 0 {
 			return nil
 		} else {
@@ -187,10 +232,12 @@ func (q *Queue) awaitKey(t time.Duration) []byte {
 
 	select {
 	case <-q.c:
+		// Item became available
 		q.mutex.Lock()
 		defer q.mutex.Unlock()
 		return q.ids.PopID().Key()
 	case <-cancel:
+		// Timed out
 		return nil
 	}
 }
@@ -245,24 +292,27 @@ func (txn *Txn) Put(v []byte) error {
 	return nil
 }
 
-// Take gets an item from the queue.
+// Take gets an item from the queue, returning nil if no items are available.
 func (txn *Txn) Take() ([]byte, error) {
 	return txn.TakeWait(0)
 }
 
-// Take gets an item from the queue, waiting at most `t` before returning nil.
+// Take gets an item from the queue, waiting at most `t` for one to become
+// available. If no items are available, nil is returned.
 func (txn *Txn) TakeWait(t time.Duration) ([]byte, error) {
 	id, k, v, err := txn.queue.take(t)
 	if err != nil {
 		return v, err
 	}
 	if id == internal.NilID {
+		// No items to take
 		return nil, nil
 	}
 
 	txn.mutex.Lock()
 	defer txn.mutex.Unlock()
 
+	// Start a new batch
 	if txn.batch == nil {
 		txn.batch = levigo.NewWriteBatch()
 	}
@@ -287,12 +337,16 @@ func (txn *Txn) Commit() error {
 	defer wo.Close()
 	err := txn.queue.db.db.Write(wo, txn.batch)
 
+	if err != nil {
+		return err
+	}
+
 	txn.queue.putKey(*txn.puts...)
 	txn.batch = nil
 	txn.puts = internal.NewIDHeap()
 	txn.takes = internal.NewIDHeap()
 
-	return err
+	return nil
 }
 
 // Close reverts all changes from the transaction and releases any held
