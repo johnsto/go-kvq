@@ -59,7 +59,9 @@ func (db *DB) Close() {
 	db.db.Close()
 }
 
-func (db *DB) Iterator() *DBIterator {
+// Iterator returns a new `Iterator` for iterating through keys within the
+// database.
+func (db *DB) Iterator() Iterator {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 
@@ -73,6 +75,7 @@ func (db *DB) Iterator() *DBIterator {
 type Iterator interface {
 	Seek(k []byte)
 	SeekToFirst()
+	Next()
 	Valid() bool
 	Key() []byte
 	Close()

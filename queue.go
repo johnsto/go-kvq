@@ -188,7 +188,7 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 }
 
 // Batch creates a new batch for writing/deleting data from the queue.
-func (q *Queue) Batch() *QueueBatch {
+func (q *Queue) Batch() Batch {
 	return &QueueBatch{
 		queue:      q,
 		WriteBatch: levigo.NewWriteBatch(),
