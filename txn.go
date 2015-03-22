@@ -43,8 +43,7 @@ func (txn *Txn) Put(v []byte) error {
 	if txn.batch == nil {
 		txn.batch = txn.queue.Batch()
 	}
-	dbk := joinKey(txn.queue.ns, k)
-	txn.batch.Put(dbk, v)
+	txn.batch.Put(k, v)
 
 	// mark as put
 	txn.puts.Push(id)

@@ -194,7 +194,7 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 }
 
 // Batch creates a new batch for writing/deleting data from the queue.
-func (q *Queue) Batch() Batch {
+func (q *Queue) Batch() *QueueBatch {
 	return &QueueBatch{
 		queue:      q,
 		WriteBatch: levigo.NewWriteBatch(),
@@ -204,6 +204,16 @@ func (q *Queue) Batch() Batch {
 type QueueBatch struct {
 	queue *Queue
 	*levigo.WriteBatch
+}
+
+func (b *QueueBatch) Put(k, v []byte) {
+	dbk := joinKey(b.queue.ns, k)
+	b.WriteBatch.Put(dbk, v)
+}
+
+func (b *QueueBatch) Delete(k []byte) {
+	dbk := joinKey(b.queue.ns, k)
+	b.WriteBatch.Delete(dbk)
 }
 
 // Write commits the data in the batch to the underlying database.
