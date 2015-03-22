@@ -1,24 +1,24 @@
 package leviq
 
 import (
-	"log"
 	"sync"
 	"time"
 
 	"github.com/johnsto/leviq/internal"
 )
 
-type Batcher interface {
+type Batch interface {
 	Put(k, v []byte)
 	Delete(k []byte)
 	Clear()
 	Write() error
+	Close()
 }
 
 // Txn represents a transaction on a queue
 type Txn struct {
 	queue *Queue
-	batch Batcher
+	batch Batch
 	puts  *internal.IDHeap // IDs to put
 	takes *internal.IDHeap // IDs being taken
 	mutex *sync.Mutex
@@ -64,9 +64,7 @@ func (txn *Txn) Take() ([]byte, error) {
 // TakeN gets `n` items from the queue, waiting at most `t` for them to all
 // become available. If no items are available, nil is returned.
 func (txn *Txn) TakeN(n int, t time.Duration) ([][]byte, error) {
-	log.Printf("Take %d keys", n)
 	ids, keys, values, err := txn.queue.take(n, t)
-	log.Printf("Got %d keys", len(keys))
 	if err != nil {
 		return nil, err
 	}

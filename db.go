@@ -58,3 +58,27 @@ func (db *DB) Queue(namespace string) (*Queue, error) {
 func (db *DB) Close() {
 	db.db.Close()
 }
+
+func (db *DB) Iterator() *DBIterator {
+	ro := levigo.NewReadOptions()
+	defer ro.Close()
+
+	it := db.db.NewIterator(ro)
+	return &DBIterator{
+		db:       db,
+		Iterator: it,
+	}
+}
+
+type Iterator interface {
+	Seek(k []byte)
+	SeekToFirst()
+	Valid() bool
+	Key() []byte
+	Close()
+}
+
+type DBIterator struct {
+	db *DB
+	*levigo.Iterator
+}

@@ -24,10 +24,7 @@ type Queue struct {
 
 // init populates the queue with all the IDs from the saved database.
 func (q *Queue) init() error {
-	ro := levigo.NewReadOptions()
-	defer ro.Close()
-
-	it := q.db.db.NewIterator(ro)
+	it := q.db.Iterator()
 	defer it.Close()
 
 	// Seek to first key within namespace
@@ -66,11 +63,8 @@ func (q *Queue) SetSync(sync bool) {
 // Clear removes all entries in the DB. Do not call if any transactions are in
 // progress.
 func (q *Queue) Clear() error {
-	ro := levigo.NewReadOptions()
-	defer ro.Close()
-
-	b := levigo.NewWriteBatch()
-	it := q.db.db.NewIterator(ro)
+	b := q.Batch()
+	it := q.db.Iterator()
 
 	// Seek to first key within namespace
 	if q.ns == nil {
@@ -89,11 +83,7 @@ func (q *Queue) Clear() error {
 	}
 
 	// Write to disk
-	wo := levigo.NewWriteOptions()
-	wo.SetSync(q.sync)
-	defer wo.Close()
-
-	return q.db.db.Write(wo, b)
+	return b.Write()
 }
 
 // Transaction starts a new transaction on the queue.
@@ -180,6 +170,8 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 	values = make([][]byte, n)
 
 	ro := levigo.NewReadOptions()
+	defer ro.Close()
+
 	for i, k := range keys {
 		// retrieve value
 		dbk := joinKey(q.ns, k)
@@ -196,20 +188,20 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 }
 
 // Batch creates a new batch for writing/deleting data from the queue.
-func (q *Queue) Batch() *Batch {
-	return &Batch{
+func (q *Queue) Batch() *QueueBatch {
+	return &QueueBatch{
 		queue:      q,
 		WriteBatch: levigo.NewWriteBatch(),
 	}
 }
 
-type Batch struct {
+type QueueBatch struct {
 	queue *Queue
 	*levigo.WriteBatch
 }
 
 // Write commits the data in the batch to the underlying database.
-func (b *Batch) Write() error {
+func (b *QueueBatch) Write() error {
 	wo := levigo.NewWriteOptions()
 	wo.SetSync(b.queue.sync)
 	defer wo.Close()
