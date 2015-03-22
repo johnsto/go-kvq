@@ -5,14 +5,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jmhodges/levigo"
 	"github.com/johnsto/leviq/internal"
 )
+
+type Batcher interface {
+	Put(k, v []byte)
+	Delete(k []byte)
+	Clear()
+	Write() error
+}
 
 // Txn represents a transaction on a queue
 type Txn struct {
 	queue *Queue
-	batch *levigo.WriteBatch
+	batch Batcher
 	puts  *internal.IDHeap // IDs to put
 	takes *internal.IDHeap // IDs being taken
 	mutex *sync.Mutex
@@ -35,7 +41,7 @@ func (txn *Txn) Put(v []byte) error {
 
 	// insert into batch
 	if txn.batch == nil {
-		txn.batch = levigo.NewWriteBatch()
+		txn.batch = txn.queue.Batch()
 	}
 	dbk := joinKey(txn.queue.ns, k)
 	txn.batch.Put(dbk, v)
@@ -75,7 +81,7 @@ func (txn *Txn) TakeN(n int, t time.Duration) ([][]byte, error) {
 
 	// Start a new batch
 	if txn.batch == nil {
-		txn.batch = levigo.NewWriteBatch()
+		txn.batch = txn.queue.Batch()
 	}
 
 	for i := 0; i < n; i++ {
@@ -95,10 +101,7 @@ func (txn *Txn) Commit() error {
 		return nil
 	}
 
-	wo := levigo.NewWriteOptions()
-	wo.SetSync(txn.queue.sync)
-	defer wo.Close()
-	err := txn.queue.db.db.Write(wo, txn.batch)
+	err := txn.batch.Write()
 
 	if err != nil {
 		return err
