@@ -15,7 +15,7 @@ const (
 
 // DB is little more than a wrapper around a Levigo DB
 type DB struct {
-	db *levigo.DB
+	levigo *levigo.DB
 }
 
 // Queue encapsulates a namespaced queue held by a DB.
@@ -54,7 +54,7 @@ func Open(path string, opts *levigo.Options) (*DB, error) {
 		return nil, err
 	}
 	return &DB{
-		db: db,
+		levigo: db,
 	}, nil
 }
 
@@ -81,7 +81,7 @@ func (db *DB) Queue(namespace string) (*Queue, error) {
 
 // Close closes the queue.
 func (db *DB) Close() {
-	db.db.Close()
+	db.levigo.Close()
 }
 
 // splitKey deconstructs a DB key into an item key for the given namespace. If
@@ -110,7 +110,7 @@ func (q *Queue) init() error {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 
-	it := q.db.db.NewIterator(ro)
+	it := q.db.levigo.NewIterator(ro)
 	defer it.Close()
 
 	// Seek to first key within namespace
@@ -153,7 +153,7 @@ func (q *Queue) Clear() error {
 	defer ro.Close()
 
 	b := levigo.NewWriteBatch()
-	it := q.db.db.NewIterator(ro)
+	it := q.db.levigo.NewIterator(ro)
 
 	// Seek to first key within namespace
 	if q.ns == nil {
@@ -176,7 +176,7 @@ func (q *Queue) Clear() error {
 	wo.SetSync(q.sync)
 	defer wo.Close()
 
-	return q.db.db.Write(wo, b)
+	return q.db.levigo.Write(wo, b)
 }
 
 // Transaction starts a new transaction on the queue.
@@ -253,7 +253,7 @@ func (q *Queue) take(t time.Duration) (id internal.ID, k []byte, v []byte, err e
 	// retrieve value
 	ro := levigo.NewReadOptions()
 	dbk := joinKey(q.ns, k)
-	v, err = q.db.db.Get(ro, dbk)
+	v, err = q.db.levigo.Get(ro, dbk)
 	if err != nil {
 		return internal.NilID, nil, nil, err
 	}
@@ -262,6 +262,12 @@ func (q *Queue) take(t time.Duration) (id internal.ID, k []byte, v []byte, err e
 	id, err = internal.KeyToID(k)
 
 	return id, k, v, err
+}
+
+// Size returns the number of elements in the queue available for taking
+// (i.e. not in a transaction)
+func (q Queue) Size() int {
+	return q.ids.Len()
 }
 
 // Put inserts the data into the queue.
@@ -318,7 +324,7 @@ func (txn *Txn) TakeWait(t time.Duration) ([]byte, error) {
 	}
 
 	txn.takes.Push(id)
-	txn.batch.Delete(k)
+	txn.batch.Delete(joinKey(txn.queue.ns, k))
 
 	return v, err
 }
@@ -335,14 +341,20 @@ func (txn *Txn) Commit() error {
 	wo := levigo.NewWriteOptions()
 	wo.SetSync(txn.queue.sync)
 	defer wo.Close()
-	err := txn.queue.db.db.Write(wo, txn.batch)
+
+	err := txn.queue.db.levigo.Write(wo, txn.batch)
 
 	if err != nil {
 		return err
 	}
 
 	txn.queue.putKey(*txn.puts...)
-	txn.batch = nil
+
+	if txn.batch != nil {
+		txn.batch.Close()
+		txn.batch = nil
+	}
+
 	txn.puts = internal.NewIDHeap()
 	txn.takes = internal.NewIDHeap()
 
@@ -364,7 +376,9 @@ func (txn *Txn) Close() error {
 		txn.queue.putKey(*txn.takes...)
 
 		txn.batch.Clear()
+		txn.batch.Close()
 		txn.batch = nil
+
 		txn.puts = internal.NewIDHeap()
 		txn.takes = internal.NewIDHeap()
 	}
