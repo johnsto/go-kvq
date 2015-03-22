@@ -106,7 +106,10 @@ func (txn *Txn) Commit() error {
 	}
 
 	txn.queue.putKey(*txn.puts...)
-	txn.batch = nil
+	if txn.batch != nil {
+		txn.batch.Close()
+		txn.batch = nil
+	}
 	txn.puts = internal.NewIDHeap()
 	txn.takes = internal.NewIDHeap()
 
@@ -128,6 +131,7 @@ func (txn *Txn) Close() error {
 		txn.queue.putKey(*txn.takes...)
 
 		txn.batch.Clear()
+		txn.batch.Close()
 		txn.batch = nil
 		txn.puts = internal.NewIDHeap()
 		txn.takes = internal.NewIDHeap()
