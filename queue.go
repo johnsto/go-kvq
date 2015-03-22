@@ -60,6 +60,12 @@ func (q *Queue) SetSync(sync bool) {
 	q.sync = sync
 }
 
+// Size returns the number of keys currently available within the queue.
+// This does not include keys that are in the process of being put or taken.
+func (q Queue) Size() int {
+	return len(*q.ids)
+}
+
 // Clear removes all entries in the DB. Do not call if any transactions are in
 // progress.
 func (q *Queue) Clear() error {
