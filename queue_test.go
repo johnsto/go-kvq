@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestInit ennsures that data are loaded again correctly from disk.
+// TestInit ensures that data are loaded again correctly from disk.
 func TestInit(t *testing.T) {
 	err := Destroy("queue.db")
 
@@ -64,7 +64,7 @@ func TestInit(t *testing.T) {
 	assert.Nil(t, err)
 	q.SetSync(true)
 
-	// Ensure  no stragglers
+	// Ensure read values are now gone
 	tx = q.Transaction()
 	v, err := tx.Take()
 	assert.NoError(t, err)
