@@ -89,6 +89,13 @@ func TestQueueSingle(t *testing.T) {
 
 	// Read data
 	rx := q.Transaction()
+	vs, err := rx.TakeN(50, time.Second)
+	assert.NoError(t, err)
+	for _, v := range vs {
+		assert.True(t, table[string(v)])
+		delete(table, string(v))
+	}
+
 	for len(table) > 0 {
 		v, err := rx.Take()
 		assert.NoError(t, err)
