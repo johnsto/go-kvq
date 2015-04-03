@@ -47,12 +47,12 @@ func main() {
 leviq currently provides backends for the following LevelDB (or LevelDB-like) databases:
 
 ### [goleveldb](https://github.com/syndtr/goleveldb)
-Uses the Go-native implementation of LevelDB. Currently the best-performing of all three backends, and doesn't require any external libraries. Use this unless you have a good reason not to.
+Uses the Go-native implementation of LevelDB. Currently the best-performing of all three backends, and doesn't require any external libraries. Use this backend unless you have a good reason to use another.
 
 ### [levigo](https://github.com/jmhodges/levigo)
 This backend uses the Go bindings to the native Level DB libraries, and therefore has a third-party dependency. Performance is similar to goleveldb (or slightly lower, in my experience).
 
 
 ### [Bolt](https://github.com/boltdb/bolt)
-Currently about slower than the other two backends.
+Currently slower than either of the two LevelDB-based backends, but growing in popularity.
 
