@@ -7,18 +7,10 @@ import (
 	"github.com/johnsto/leviq/internal"
 )
 
-type Batch interface {
-	Put(k, v []byte)
-	Delete(k []byte)
-	Clear()
-	Write() error
-	Close()
-}
-
 // Txn represents a transaction on a queue
 type Txn struct {
 	queue *Queue
-	batch Batch
+	batch *QueueBatch
 	puts  *internal.IDHeap // IDs to put
 	takes *internal.IDHeap // IDs being taken
 	mutex *sync.Mutex

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jmhodges/levigo"
+	"github.com/johnsto/leviq/backend"
 	"github.com/johnsto/leviq/internal"
 )
 
@@ -175,13 +175,10 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 	ids = make([]internal.ID, n)
 	values = make([][]byte, n)
 
-	ro := levigo.NewReadOptions()
-	defer ro.Close()
-
 	for i, k := range keys {
 		// retrieve value
 		dbk := joinKey(q.ns, k)
-		values[i], err = q.db.db.Get(ro, dbk)
+		values[i], err = q.db.Get(dbk)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -196,30 +193,35 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 // Batch creates a new batch for writing/deleting data from the queue.
 func (q *Queue) Batch() *QueueBatch {
 	return &QueueBatch{
-		queue:      q,
-		WriteBatch: levigo.NewWriteBatch(),
+		queue: q,
+		batch: q.db.Batch(),
 	}
 }
 
 type QueueBatch struct {
 	queue *Queue
-	*levigo.WriteBatch
+	batch backend.Batch
 }
 
 func (b *QueueBatch) Put(k, v []byte) {
 	dbk := joinKey(b.queue.ns, k)
-	b.WriteBatch.Put(dbk, v)
+	b.batch.Put(dbk, v)
 }
 
 func (b *QueueBatch) Delete(k []byte) {
 	dbk := joinKey(b.queue.ns, k)
-	b.WriteBatch.Delete(dbk)
+	b.batch.Delete(dbk)
 }
 
 // Write commits the data in the batch to the underlying database.
 func (b *QueueBatch) Write() error {
-	wo := levigo.NewWriteOptions()
-	wo.SetSync(b.queue.sync)
-	defer wo.Close()
-	return b.queue.db.db.Write(wo, b.WriteBatch)
+	return b.batch.Write()
+}
+
+func (b *QueueBatch) Clear() {
+	b.batch.Clear()
+}
+
+func (b *QueueBatch) Close() {
+	b.batch.Close()
 }

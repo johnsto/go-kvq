@@ -3,34 +3,16 @@ package leviq
 import (
 	"sync"
 
-	"github.com/jmhodges/levigo"
+	"github.com/johnsto/leviq/backend"
 	"github.com/johnsto/leviq/internal"
 )
 
-// DB is little more than a wrapper around a Levigo DB
 type DB struct {
-	db *levigo.DB
+	backend.DB
 }
 
-// Destroy destroys the DB at the given path.
-func Destroy(path string) error {
-	return levigo.DestroyDatabase(path, levigo.NewOptions())
-}
-
-// Open opens the DB at the given path.
-func Open(path string, opts *levigo.Options) (*DB, error) {
-	if opts == nil {
-		opts = levigo.NewOptions()
-		opts.SetCreateIfMissing(true)
-	}
-
-	db, err := levigo.Open(path, opts)
-	if err != nil {
-		return nil, err
-	}
-	return &DB{
-		db: db,
-	}, nil
+func NewDB(db backend.DB) *DB {
+	return &DB{db}
 }
 
 // Queue opens a queue within the given namespace (key prefix), whereby keys
@@ -52,36 +34,4 @@ func (db *DB) Queue(namespace string) (*Queue, error) {
 		return nil, err
 	}
 	return queue, nil
-}
-
-// Close closes the queue.
-func (db *DB) Close() {
-	db.db.Close()
-}
-
-// Iterator returns a new `Iterator` for iterating through keys within the
-// database.
-func (db *DB) Iterator() Iterator {
-	ro := levigo.NewReadOptions()
-	defer ro.Close()
-
-	it := db.db.NewIterator(ro)
-	return &DBIterator{
-		db:       db,
-		Iterator: it,
-	}
-}
-
-type Iterator interface {
-	Seek(k []byte)
-	SeekToFirst()
-	Next()
-	Valid() bool
-	Key() []byte
-	Close()
-}
-
-type DBIterator struct {
-	db *DB
-	*levigo.Iterator
 }

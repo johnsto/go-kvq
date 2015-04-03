@@ -7,15 +7,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/johnsto/leviq/backend/levigo"
 	"github.com/stretchr/testify/assert"
 )
+
+func Open(name string) (*DB, error) {
+	levidb, err := levigo.Open("queue.db")
+	return NewDB(levidb), err
+}
+
+func Destroy(name string) error {
+	return levigo.Destroy(name)
+}
 
 // TestInit ensures that data are loaded again correctly from disk.
 func TestInit(t *testing.T) {
 	err := Destroy("queue.db")
 
 	// Open initial DB
-	db, err := Open("queue.db", nil)
+	db, err := Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -35,7 +45,7 @@ func TestInit(t *testing.T) {
 
 	// Re-open DB
 	db.Close()
-	db, err = Open("queue.db", nil)
+	db, err = Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -55,7 +65,7 @@ func TestInit(t *testing.T) {
 
 	// Re-open DB
 	db.Close()
-	db, err = Open("queue.db", nil)
+	db, err = Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -76,7 +86,7 @@ func TestInit(t *testing.T) {
 // TestQueueSingle tests a batch of puts and takes in a single transaction
 func TestQueueSingle(t *testing.T) {
 	err := Destroy("queue.db")
-	db, err := Open("queue.db", nil)
+	db, err := Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -129,7 +139,7 @@ func TestQueueSingle(t *testing.T) {
 // TestQueueMulti tests a series of puts/takes in a number of transactions
 func TestQueueMulti(t *testing.T) {
 	err := Destroy("queue.db")
-	db, err := Open("queue.db", nil)
+	db, err := Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -163,7 +173,7 @@ func TestQueueMulti(t *testing.T) {
 // order.
 func TestQueueOrdered(t *testing.T) {
 	err := Destroy("queue.db")
-	db, err := Open("queue.db", nil)
+	db, err := Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -197,7 +207,7 @@ func TestQueueOrdered(t *testing.T) {
 // goroutines.
 func TestQueueThreaded(t *testing.T) {
 	err := Destroy("queue.db")
-	db, err := Open("queue.db", nil)
+	db, err := Open("queue.db")
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -285,7 +295,7 @@ func TestQueueThreaded(t *testing.T) {
 func TestPutDiscard(t *testing.T) {
 	Destroy("test.db")
 
-	db, err := Open("test.db", nil)
+	db, err := Open("test.db")
 	defer db.Close()
 	assert.Nil(t, err)
 
@@ -310,7 +320,7 @@ func TestTakeDiscard(t *testing.T) {
 
 	Destroy("test.db")
 
-	db, err := Open("test.db", nil)
+	db, err := Open("test.db")
 	defer db.Close()
 	assert.Nil(t, err)
 
@@ -350,7 +360,7 @@ func TestTakeDiscard(t *testing.T) {
 func TestNamespaces(t *testing.T) {
 	Destroy("test.db")
 
-	db, err := Open("test.db", nil)
+	db, err := Open("test.db")
 	defer db.Close()
 	assert.Nil(t, err)
 
@@ -433,7 +443,7 @@ func BenchmarkPutsSync1000(b *testing.B) {
 
 func benchmarkPuts(b *testing.B, n int, sync bool) {
 	Destroy("benchmark.db")
-	db, err := Open("benchmark.db", nil)
+	db, err := Open("benchmark.db")
 	assert.Nil(b, err)
 	defer db.Close()
 
@@ -458,7 +468,7 @@ func benchmarkPuts(b *testing.B, n int, sync bool) {
 // BenchmarkTake benchmarks the speed at which items can be taken.
 func BenchmarkTake(b *testing.B) {
 	Destroy("benchmark.db")
-	db, err := Open("benchmark.db", nil)
+	db, err := Open("benchmark.db")
 	assert.Nil(b, err)
 	defer db.Close()
 	q, err := db.Queue("test")
