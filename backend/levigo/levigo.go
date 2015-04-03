@@ -29,11 +29,11 @@ func NewLevigoDB(db *levigo.DB) *LevigoDB {
 	return &LevigoDB{db}
 }
 
-func (db *LevigoDB) Queue(name string) backend.Queue {
+func (db *LevigoDB) Queue(name string) (backend.Queue, error) {
 	return &LevigoQueue{
 		db: db,
 		ns: []byte(name),
-	}
+	}, nil
 }
 
 func (db *LevigoDB) Close() {

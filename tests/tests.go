@@ -1,4 +1,4 @@
-package leviq
+package tests
 
 import (
 	"log"
@@ -7,26 +7,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/johnsto/leviq/backend/bolt"
+	"github.com/johnsto/leviq"
 	"github.com/stretchr/testify/assert"
 )
 
-func Open(path string) (*DB, error) {
-	levidb, err := bolt.Open(path)
-	return NewDB(levidb), err
-}
-
-func Destroy(path string) error {
-	return bolt.Destroy(path)
-}
+type OpenDB func(path string) (*leviq.DB, error)
+type DestroyDB func(path string) error
 
 // TestInit ensures that data are loaded again correctly from disk.
-func TestInit(t *testing.T) {
+func TestInit(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-init.db"
-	err := Destroy(path)
+	err := destroy(path)
 
 	// Open initial DB
-	db, err := Open(path)
+	db, err := open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -45,7 +39,7 @@ func TestInit(t *testing.T) {
 
 	// Re-open DB
 	db.Close()
-	db, err = Open(path)
+	db, err = open(path)
 	assert.NoError(t, err)
 
 	q, err = db.Queue("test")
@@ -62,7 +56,7 @@ func TestInit(t *testing.T) {
 
 	// Re-open DB
 	db.Close()
-	db, err = Open(path)
+	db, err = open(path)
 	assert.NoError(t, err)
 
 	q, err = db.Queue("test")
@@ -78,11 +72,11 @@ func TestInit(t *testing.T) {
 }
 
 // TestQueueSingle tests a batch of puts and takes in a single transaction
-func TestQueueSingle(t *testing.T) {
+func TestQueueSingle(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-queue-single.db"
 
-	err := Destroy(path)
-	db, err := Open(path)
+	err := destroy(path)
+	db, err := open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -133,11 +127,11 @@ func TestQueueSingle(t *testing.T) {
 }
 
 // TestQueueMulti tests a series of puts/takes in a number of transactions
-func TestQueueMulti(t *testing.T) {
+func TestQueueMulti(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-queue-multi.db"
 
-	err := Destroy(path)
-	db, err := Open(path)
+	err := destroy(path)
+	db, err := open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -169,11 +163,11 @@ func TestQueueMulti(t *testing.T) {
 
 // TestQueueOrdered tests that items come out of the queue in the correct
 // order.
-func TestQueueOrdered(t *testing.T) {
+func TestQueueOrdered(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-queue-ordered.db"
 
-	err := Destroy(path)
-	db, err := Open(path)
+	err := destroy(path)
+	db, err := open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -205,11 +199,11 @@ func TestQueueOrdered(t *testing.T) {
 
 // TestQueueThreaded puts and takes items from a number of simultaneous
 // goroutines.
-func TestQueueThreaded(t *testing.T) {
+func TestQueueThreaded(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-queue-threaded.db"
 
-	err := Destroy(path)
-	db, err := Open(path)
+	err := destroy(path)
+	db, err := open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -303,12 +297,12 @@ func TestQueueThreaded(t *testing.T) {
 
 // TestPutDiscard tests that entries put into a transaction and then discarded
 // are not persisted.
-func TestPutDiscard(t *testing.T) {
+func TestPutDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-put-discard.db"
 
-	Destroy(path)
+	destroy(path)
 
-	db, err := Open(path)
+	db, err := open(path)
 	defer db.Close()
 	assert.NoError(t, err)
 
@@ -328,13 +322,13 @@ func TestPutDiscard(t *testing.T) {
 	rx.Close()
 }
 
-func TestTakeDiscard(t *testing.T) {
+func TestTakeDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
 	var err error
 
 	path := "test-take-discard.db"
-	Destroy(path)
+	destroy(path)
 
-	db, err := Open(path)
+	db, err := open(path)
 	defer db.Close()
 	assert.NoError(t, err)
 
@@ -347,7 +341,7 @@ func TestTakeDiscard(t *testing.T) {
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Commit()
 
-	var rx *Txn
+	var rx *leviq.Txn
 	var v []byte
 
 	rx = q.Transaction()
@@ -371,11 +365,11 @@ func TestTakeDiscard(t *testing.T) {
 }
 
 // TestNamespaces tests that items in disparate namespaces are kept apart.
-func TestNamespaces(t *testing.T) {
+func TestNamespaces(t *testing.T, open OpenDB, destroy DestroyDB) {
 	path := "test-namespaces.db"
-	Destroy(path)
+	destroy(path)
 
-	db, err := Open(path)
+	db, err := open(path)
 	defer db.Close()
 	assert.NoError(t, err)
 
@@ -422,26 +416,26 @@ func TestNamespaces(t *testing.T) {
 	assert.NoError(t, tx.Close())
 }
 
-func BenchmarkPuts1(b *testing.B) {
-	benchmarkPuts(b, 1)
+func BenchmarkPuts1(b *testing.B, open OpenDB, destroy DestroyDB) {
+	benchmarkPuts(b, open, destroy, 1)
 }
 
-func BenchmarkPuts10(b *testing.B) {
-	benchmarkPuts(b, 10)
+func BenchmarkPuts10(b *testing.B, open OpenDB, destroy DestroyDB) {
+	benchmarkPuts(b, open, destroy, 10)
 }
 
-func BenchmarkPuts100(b *testing.B) {
-	benchmarkPuts(b, 100)
+func BenchmarkPuts100(b *testing.B, open OpenDB, destroy DestroyDB) {
+	benchmarkPuts(b, open, destroy, 100)
 }
 
-func BenchmarkPuts1000(b *testing.B) {
-	benchmarkPuts(b, 1000)
+func BenchmarkPuts1000(b *testing.B, open OpenDB, destroy DestroyDB) {
+	benchmarkPuts(b, open, destroy, 1000)
 }
 
-func benchmarkPuts(b *testing.B, n int) {
+func benchmarkPuts(b *testing.B, open OpenDB, destroy DestroyDB, n int) {
 	path := "benchmark-puts.db"
-	Destroy(path)
-	db, err := Open(path)
+	destroy(path)
+	db, err := open(path)
 	assert.Nil(b, err)
 	defer db.Close()
 
@@ -463,18 +457,18 @@ func benchmarkPuts(b *testing.B, n int) {
 }
 
 // BenchmarkTake benchmarks the speed at which items can be taken.
-func BenchmarkTake(b *testing.B) {
+func BenchmarkTake(b *testing.B, open OpenDB, destroy DestroyDB) {
 	path := "benchmark-take.db"
-	Destroy(path)
-	db, err := Open(path)
+	destroy(path)
+	db, err := open(path)
 	assert.Nil(b, err)
 	defer db.Close()
 	q, err := db.Queue("test")
 	assert.Nil(b, err)
-	benchmarkTake(b, q)
+	benchmarkTake(b, open, destroy, q)
 }
 
-func benchmarkTake(b *testing.B, q *Queue) {
+func benchmarkTake(b *testing.B, open OpenDB, destroy DestroyDB, q *leviq.Queue) {
 	// Seed DB with items to take
 	tx := q.Transaction()
 	defer tx.Close()

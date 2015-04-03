@@ -1,4 +1,4 @@
-package leviq
+package tests
 
 import (
 	"log"
@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/johnsto/leviq"
 	"github.com/johnsto/leviq/backend/bolt"
 	"github.com/stretchr/testify/assert"
 )
 
-func Open(path string) (*DB, error) {
+func Open(path string) (*leviq.DB, error) {
 	levidb, err := bolt.Open(path)
-	return NewDB(levidb), err
+	return leviq.NewDB(levidb), err
 }
 
 func Destroy(path string) error {
@@ -79,6 +80,7 @@ func TestInit(t *testing.T) {
 
 // TestQueueSingle tests a batch of puts and takes in a single transaction
 func TestQueueSingle(t *testing.T) {
+	log.Println("TestQueueSingle")
 	path := "test-queue-single.db"
 
 	err := Destroy(path)
@@ -347,7 +349,7 @@ func TestTakeDiscard(t *testing.T) {
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Commit()
 
-	var rx *Txn
+	var rx *leviq.Txn
 	var v []byte
 
 	rx = q.Transaction()
@@ -474,7 +476,7 @@ func BenchmarkTake(b *testing.B) {
 	benchmarkTake(b, q)
 }
 
-func benchmarkTake(b *testing.B, q *Queue) {
+func benchmarkTake(b *testing.B, q *leviq.Queue) {
 	// Seed DB with items to take
 	tx := q.Transaction()
 	defer tx.Close()

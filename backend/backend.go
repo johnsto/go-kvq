@@ -1,7 +1,10 @@
 package backend
 
+type Open func(path string) (DB, error)
+type Destroy func(path string) error
+
 type DB interface {
-	Queue(name string) Queue
+	Queue(name string) (Queue, error)
 	Close()
 }
 

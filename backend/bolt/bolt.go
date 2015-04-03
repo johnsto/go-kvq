@@ -2,7 +2,6 @@ package bolt
 
 import "github.com/johnsto/leviq/backend"
 import "github.com/boltdb/bolt"
-import "log"
 import "os"
 
 type BoltDB struct {
@@ -14,7 +13,7 @@ func Destroy(path string) error {
 	return os.RemoveAll(path)
 }
 
-func Open(path string) (*BoltDB, error) {
+func Open(path string) (backend.DB, error) {
 	db, err := bolt.Open(path, 0777, nil)
 	if err != nil {
 		return nil, err
@@ -26,11 +25,11 @@ func NewBoltDB(db *bolt.DB) *BoltDB {
 	return &BoltDB{db}
 }
 
-func (db *BoltDB) Queue(name string) backend.Queue {
+func (db *BoltDB) Queue(name string) (backend.Queue, error) {
 	return &BoltQueue{
 		db:   db,
 		name: name,
-	}
+	}, nil
 }
 
 func (db *BoltDB) Close() {
@@ -42,20 +41,8 @@ type BoltQueue struct {
 	name string
 }
 
-func (q *BoltQueue) ForEach(fn func(k, v []byte) error) error {
-	return q.db.boltDB.View(func(tx *bolt.Tx) error {
-		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
-		if err != nil {
-			return err
-		}
-		return bucket.ForEach(fn)
-	})
-}
-
 func (q *BoltQueue) Batch(fn func(backend.Batch) error) error {
-	log.Println("nbatch!")
 	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
-		log.Println(tx.Writable())
 		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
 		if err != nil {
 			return err
@@ -67,9 +54,19 @@ func (q *BoltQueue) Batch(fn func(backend.Batch) error) error {
 	})
 }
 
+func (q *BoltQueue) ForEach(fn func(k, v []byte) error) error {
+	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
+		if err != nil {
+			return err
+		}
+		return bucket.ForEach(fn)
+	})
+}
+
 func (q *BoltQueue) Get(k []byte) ([]byte, error) {
 	var v []byte
-	return v, q.db.boltDB.View(func(tx *bolt.Tx) error {
+	return v, q.db.boltDB.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
 		if err != nil {
 			return err
