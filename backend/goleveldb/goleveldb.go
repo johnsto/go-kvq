@@ -3,14 +3,26 @@ package goleveldb
 import (
 	"os"
 
+	"github.com/johnsto/leviq"
 	"github.com/johnsto/leviq/backend"
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
+// DB encapsulates a LevelDB instance.
 type DB struct {
 	levelDB *leveldb.DB
+}
+
+// Open creates or opens an existing DB at the given path.
+func Open(path string) (*leviq.DB, error) {
+	levelDB, err := leveldb.OpenFile(path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return New(levelDB), nil
 }
 
 // Destroy destroys the DB at the given path.
@@ -18,44 +30,44 @@ func Destroy(path string) error {
 	return os.RemoveAll(path)
 }
 
-func Open(path string) (*DB, error) {
-	db, err := leveldb.OpenFile(path, nil)
-	if err != nil {
-		return nil, err
-	}
-	return NewDB(db), nil
+// New returns a DB from the given LevelDB instance.
+func New(db *leveldb.DB) *leviq.DB {
+	return leviq.NewDB(&DB{db})
 }
 
-func NewMemDB() (*DB, error) {
+// NewMem creates a new DB backed by memory only (i.e. not persistent)
+func NewMem() (*leviq.DB, error) {
 	storage := storage.NewMemStorage()
-	db, err := leveldb.Open(storage, nil)
+	levelDB, err := leveldb.Open(storage, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &DB{db}, nil
+	return New(levelDB), nil
 }
 
-func NewDB(db *leveldb.DB) *DB {
-	return &DB{db}
-}
-
-func (db *DB) Queue(name string) (backend.Queue, error) {
-	return &Queue{
+// Bucket returns a queue in the given namespace.
+func (db *DB) Bucket(name string) (backend.Bucket, error) {
+	return &Bucket{
 		db: db,
 		ns: []byte(name),
 	}, nil
 }
 
+// Close closes the database and releases any resources.
 func (db *DB) Close() {
 	db.levelDB.Close()
 }
 
-type Queue struct {
+// Bucket represents a goleveldb-backed queue.
+type Bucket struct {
 	db *DB
 	ns []byte
 }
 
-func (q *Queue) ForEach(fn func(k, v []byte) error) error {
+// ForEach iterates through keys in the queue. If the iteration function
+// returns a non-nil error, iteration stops and the error is returned to
+// the caller.
+func (q *Bucket) ForEach(fn func(k, v []byte) error) error {
 	keyRange := util.BytesPrefix(q.ns)
 	it := q.db.levelDB.NewIterator(keyRange, nil)
 
@@ -70,8 +82,16 @@ func (q *Queue) ForEach(fn func(k, v []byte) error) error {
 	return nil
 }
 
-func (q *Queue) Batch(fn func(backend.Batch) error) error {
-	batch := NewBatch(q)
+// Batch enacts a number of operations in one atomic go. If the batch
+// function returns a non-nil error, the batch is discarded and the error
+// is returned to the caller. If the batch function returns nil, the batch
+// is committed to the queue.
+func (q *Bucket) Batch(fn func(backend.Batch) error) error {
+	batch := &Batch{
+		ns:         q.ns,
+		levelDB:    q.db.levelDB,
+		levelBatch: &leveldb.Batch{},
+	}
 	defer batch.Close()
 	if err := fn(batch); err != nil {
 		return err
@@ -79,12 +99,14 @@ func (q *Queue) Batch(fn func(backend.Batch) error) error {
 	return batch.Write()
 }
 
-func (q *Queue) Get(k []byte) ([]byte, error) {
+// Get returns the value stored at key `k`.
+func (q *Bucket) Get(k []byte) ([]byte, error) {
 	kk := append(q.ns[:], k...)
 	return q.db.levelDB.Get(kk, nil)
 }
 
-func (q *Queue) Clear() error {
+// Clear removes all items from this queue.
+func (q *Bucket) Clear() error {
 	keyRange := util.BytesPrefix(q.ns)
 	it := q.db.levelDB.NewIterator(keyRange, nil)
 
@@ -96,21 +118,15 @@ func (q *Queue) Clear() error {
 		b.Delete(k)
 	}
 
-	return q.db.levelDB.Write(b, nil)
+	wo := &opt.WriteOptions{Sync: true}
+	return q.db.levelDB.Write(b, wo)
 }
 
+// Batch represents a set of put/delete operations to perform on a Bucket.
 type Batch struct {
 	levelDB    *leveldb.DB
 	levelBatch *leveldb.Batch
 	ns         []byte
-}
-
-func NewBatch(q *Queue) *Batch {
-	return &Batch{
-		ns:         q.ns,
-		levelDB:    q.db.levelDB,
-		levelBatch: &leveldb.Batch{},
-	}
 }
 
 func (b *Batch) Put(k, v []byte) error {
@@ -126,7 +142,8 @@ func (b *Batch) Delete(k []byte) error {
 }
 
 func (b *Batch) Write() error {
-	return b.levelDB.Write(b.levelBatch, nil)
+	wo := &opt.WriteOptions{Sync: true}
+	return b.levelDB.Write(b.levelBatch, wo)
 }
 
 func (b *Batch) Clear() {

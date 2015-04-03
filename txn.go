@@ -88,7 +88,7 @@ func (txn *Txn) Commit() error {
 		return nil
 	}
 
-	err := txn.queue.Queue.Batch(func(b backend.Batch) error {
+	err := txn.queue.bucket.Batch(func(b backend.Batch) error {
 		for _, kv := range txn.putValues {
 			b.Put(kv.k, kv.v)
 		}

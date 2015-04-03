@@ -1,10 +1,13 @@
 package bolt
 
-import "github.com/johnsto/leviq/backend"
-import "github.com/boltdb/bolt"
-import "os"
+import (
+	"github.com/boltdb/bolt"
+	"github.com/johnsto/leviq"
+	"github.com/johnsto/leviq/backend"
+	"os"
+)
 
-type BoltDB struct {
+type DB struct {
 	boltDB *bolt.DB
 }
 
@@ -13,48 +16,48 @@ func Destroy(path string) error {
 	return os.RemoveAll(path)
 }
 
-func Open(path string) (backend.DB, error) {
+func Open(path string) (*leviq.DB, error) {
 	db, err := bolt.Open(path, 0777, nil)
 	if err != nil {
 		return nil, err
 	}
-	return NewBoltDB(db), nil
+	return New(db), nil
 }
 
-func NewBoltDB(db *bolt.DB) *BoltDB {
-	return &BoltDB{db}
+func New(db *bolt.DB) *leviq.DB {
+	return leviq.NewDB(&DB{db})
 }
 
-func (db *BoltDB) Queue(name string) (backend.Queue, error) {
-	return &BoltQueue{
+func (db *DB) Bucket(name string) (backend.Bucket, error) {
+	return &Bucket{
 		db:   db,
 		name: name,
 	}, nil
 }
 
-func (db *BoltDB) Close() {
+func (db *DB) Close() {
 	db.boltDB.Close()
 }
 
-type BoltQueue struct {
-	db   *BoltDB
+type Bucket struct {
+	db   *DB
 	name string
 }
 
-func (q *BoltQueue) Batch(fn func(backend.Batch) error) error {
+func (q *Bucket) Batch(fn func(backend.Batch) error) error {
 	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
 		if err != nil {
 			return err
 		}
-		batch := &BoltBatch{
+		batch := &Batch{
 			bucket: bucket,
 		}
 		return fn(batch)
 	})
 }
 
-func (q *BoltQueue) ForEach(fn func(k, v []byte) error) error {
+func (q *Bucket) ForEach(fn func(k, v []byte) error) error {
 	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
 		if err != nil {
@@ -64,7 +67,7 @@ func (q *BoltQueue) ForEach(fn func(k, v []byte) error) error {
 	})
 }
 
-func (q *BoltQueue) Get(k []byte) ([]byte, error) {
+func (q *Bucket) Get(k []byte) ([]byte, error) {
 	var v []byte
 	return v, q.db.boltDB.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
@@ -76,23 +79,23 @@ func (q *BoltQueue) Get(k []byte) ([]byte, error) {
 	})
 }
 
-func (q *BoltQueue) Clear() error {
+func (q *Bucket) Clear() error {
 	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
 		return tx.DeleteBucket([]byte(q.name))
 	})
 }
 
-type BoltBatch struct {
+type Batch struct {
 	bucket *bolt.Bucket
 }
 
-func (b *BoltBatch) Put(k, v []byte) error {
+func (b *Batch) Put(k, v []byte) error {
 	return b.bucket.Put(k, v)
 }
 
-func (b *BoltBatch) Delete(k []byte) error {
+func (b *Batch) Delete(k []byte) error {
 	return b.bucket.Delete(k)
 }
 
-func (b *BoltBatch) Close() {
+func (b *Batch) Close() {
 }

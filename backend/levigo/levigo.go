@@ -2,12 +2,23 @@ package levigo
 
 import (
 	"bytes"
+	"github.com/jmhodges/levigo"
+	"github.com/johnsto/leviq"
+	"github.com/johnsto/leviq/backend"
 )
-import "github.com/johnsto/leviq/backend"
-import "github.com/jmhodges/levigo"
 
-type LevigoDB struct {
+type DB struct {
 	levigoDB *levigo.DB
+}
+
+func Open(path string) (*leviq.DB, error) {
+	opts := levigo.NewOptions()
+	opts.SetCreateIfMissing(true)
+	db, err := levigo.Open(path, opts)
+	if err != nil {
+		return nil, err
+	}
+	return New(db), nil
 }
 
 // Destroy destroys the DB at the given path.
@@ -15,37 +26,27 @@ func Destroy(path string) error {
 	return levigo.DestroyDatabase(path, levigo.NewOptions())
 }
 
-func Open(path string) (*LevigoDB, error) {
-	opts := levigo.NewOptions()
-	opts.SetCreateIfMissing(true)
-	db, err := levigo.Open(path, opts)
-	if err != nil {
-		return nil, err
-	}
-	return NewLevigoDB(db), nil
+func New(db *levigo.DB) *leviq.DB {
+	return leviq.NewDB(&DB{db})
 }
 
-func NewLevigoDB(db *levigo.DB) *LevigoDB {
-	return &LevigoDB{db}
-}
-
-func (db *LevigoDB) Queue(name string) (backend.Queue, error) {
-	return &LevigoQueue{
+func (db *DB) Bucket(name string) (backend.Bucket, error) {
+	return &Bucket{
 		db: db,
 		ns: []byte(name),
 	}, nil
 }
 
-func (db *LevigoDB) Close() {
+func (db *DB) Close() {
 	db.levigoDB.Close()
 }
 
-type LevigoQueue struct {
-	db *LevigoDB
+type Bucket struct {
+	db *DB
 	ns []byte
 }
 
-func (q *LevigoQueue) ForEach(fn func(k, v []byte) error) error {
+func (q *Bucket) ForEach(fn func(k, v []byte) error) error {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 	ro.SetFillCache(false)
@@ -69,8 +70,8 @@ func (q *LevigoQueue) ForEach(fn func(k, v []byte) error) error {
 	return nil
 }
 
-func (q *LevigoQueue) Batch(fn func(backend.Batch) error) error {
-	batch := NewLevigoBatch(q)
+func (q *Bucket) Batch(fn func(backend.Batch) error) error {
+	batch := NewBatch(q)
 	defer batch.Close()
 	if err := fn(batch); err != nil {
 		return err
@@ -78,14 +79,14 @@ func (q *LevigoQueue) Batch(fn func(backend.Batch) error) error {
 	return batch.Write()
 }
 
-func (q *LevigoQueue) Get(k []byte) ([]byte, error) {
+func (q *Bucket) Get(k []byte) ([]byte, error) {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 	kk := append(q.ns[:], k...)
 	return q.db.levigoDB.Get(ro, kk)
 }
 
-func (q *LevigoQueue) Clear() error {
+func (q *Bucket) Clear() error {
 	wb := levigo.NewWriteBatch()
 	defer wb.Close()
 	err := q.ForEach(func(k, _ []byte) error {
@@ -101,44 +102,44 @@ func (q *LevigoQueue) Clear() error {
 	return q.db.levigoDB.Write(wo, wb)
 }
 
-type LevigoBatch struct {
+type Batch struct {
 	levigoDB         *levigo.DB
 	levigoWriteBatch *levigo.WriteBatch
 	ns               []byte
 }
 
-func NewLevigoBatch(q *LevigoQueue) *LevigoBatch {
+func NewBatch(q *Bucket) *Batch {
 	wb := levigo.NewWriteBatch()
-	return &LevigoBatch{
+	return &Batch{
 		ns:               q.ns,
 		levigoDB:         q.db.levigoDB,
 		levigoWriteBatch: wb,
 	}
 }
 
-func (b *LevigoBatch) Put(k, v []byte) error {
+func (b *Batch) Put(k, v []byte) error {
 	kk := append(b.ns[:], k...)
 	b.levigoWriteBatch.Put(kk, v)
 	return nil
 }
 
-func (b *LevigoBatch) Delete(k []byte) error {
+func (b *Batch) Delete(k []byte) error {
 	kk := append(b.ns[:], k...)
 	b.levigoWriteBatch.Delete(kk)
 	return nil
 }
 
-func (b *LevigoBatch) Write() error {
+func (b *Batch) Write() error {
 	wo := levigo.NewWriteOptions()
 	wo.SetSync(true)
 	defer wo.Close()
 	return b.levigoDB.Write(wo, b.levigoWriteBatch)
 }
 
-func (b *LevigoBatch) Clear() {
+func (b *Batch) Clear() {
 	b.levigoWriteBatch.Clear()
 }
 
-func (b *LevigoBatch) Close() {
+func (b *Batch) Close() {
 	b.levigoWriteBatch.Close()
 }
