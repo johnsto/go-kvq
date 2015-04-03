@@ -1,25 +1,19 @@
 package backend
 
 type DB interface {
-	Batch() Batch
-	Iterator() Iterator
-	Get(k []byte) (v []byte, err error)
+	Queue(name string) Queue
 	Close()
+}
+
+type Queue interface {
+	ForEach(fn func(k, v []byte) error) error
+	Batch(fn func(Batch) error) error
+	Get(k []byte) ([]byte, error)
+	Clear() error
 }
 
 type Batch interface {
 	Put(k, v []byte)
 	Delete(k []byte)
-	Write() error
-	Clear()
-	Close()
-}
-
-type Iterator interface {
-	Seek(k []byte)
-	SeekToFirst()
-	Next()
-	Valid() bool
-	Key() []byte
 	Close()
 }

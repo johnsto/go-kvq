@@ -4,16 +4,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/johnsto/leviq/backend"
 	"github.com/johnsto/leviq/internal"
 )
 
+type kv struct {
+	k []byte
+	v []byte
+}
+
 // Txn represents a transaction on a queue
 type Txn struct {
-	queue *Queue
-	batch *QueueBatch
-	puts  *internal.IDHeap // IDs to put
-	takes *internal.IDHeap // IDs being taken
-	mutex *sync.Mutex
+	queue      *Queue
+	puts       *internal.IDHeap // IDs to put
+	takes      *internal.IDHeap // IDs being taken
+	putValues  []kv
+	takeValues [][]byte
+	mutex      *sync.Mutex
 }
 
 // Put inserts the data into the queue.
@@ -31,11 +38,7 @@ func (txn *Txn) Put(v []byte) error {
 	txn.mutex.Lock()
 	defer txn.mutex.Unlock()
 
-	// insert into batch
-	if txn.batch == nil {
-		txn.batch = txn.queue.Batch()
-	}
-	txn.batch.Put(k, v)
+	txn.putValues = append(txn.putValues, kv{k, v})
 
 	// mark as put
 	txn.puts.Push(id)
@@ -68,14 +71,9 @@ func (txn *Txn) TakeN(n int, t time.Duration) ([][]byte, error) {
 	txn.mutex.Lock()
 	defer txn.mutex.Unlock()
 
-	// Start a new batch
-	if txn.batch == nil {
-		txn.batch = txn.queue.Batch()
-	}
-
 	for i := 0; i < n; i++ {
 		txn.takes.Push(ids[i])
-		txn.batch.Delete(keys[i])
+		txn.takeValues = append(txn.takeValues, keys[i])
 	}
 
 	return values, err
@@ -90,20 +88,25 @@ func (txn *Txn) Commit() error {
 		return nil
 	}
 
-	err := txn.batch.Write()
+	err := txn.queue.Batch(func(b backend.Batch) error {
+		for _, kv := range txn.putValues {
+			b.Put(kv.k, kv.v)
+		}
+		for _, k := range txn.takeValues {
+			b.Delete(k)
+		}
+		return nil
+	})
 
 	if err != nil {
 		return err
 	}
 
 	txn.queue.putKey(*txn.puts...)
-	if txn.batch != nil {
-		txn.batch.Close()
-		txn.batch = nil
-	}
 	txn.puts = internal.NewIDHeap()
 	txn.takes = internal.NewIDHeap()
-
+	txn.putValues = make([]kv, 0)
+	txn.takeValues = make([][]byte, 0)
 	return nil
 }
 
@@ -114,18 +117,16 @@ func (txn *Txn) Close() error {
 		return nil
 	}
 
-	if txn.batch != nil {
-		txn.mutex.Lock()
-		defer txn.mutex.Unlock()
+	txn.mutex.Lock()
+	defer txn.mutex.Unlock()
 
-		// return taken ids to the queue
-		txn.queue.putKey(*txn.takes...)
+	// return taken ids to the queue
+	txn.queue.putKey(*txn.takes...)
 
-		txn.batch.Clear()
-		txn.batch.Close()
-		txn.batch = nil
-		txn.puts = internal.NewIDHeap()
-		txn.takes = internal.NewIDHeap()
-	}
+	txn.puts = internal.NewIDHeap()
+	txn.takes = internal.NewIDHeap()
+	txn.putValues = make([]kv, 0)
+	txn.takeValues = make([][]byte, 0)
+
 	return nil
 }

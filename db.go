@@ -19,17 +19,13 @@ func NewDB(db backend.DB) *DB {
 // are prefixed with the namespace value and a NUL byte, followed by the
 // ID of the queued item.
 func (db *DB) Queue(namespace string) (*Queue, error) {
-	var ns []byte
-	if namespace != "" {
-		ns = append([]byte(namespace), 0)
-	}
 	queue := &Queue{
-		ns:    ns,
-		db:    db,
+		Queue: db.DB.Queue(namespace),
 		mutex: &sync.Mutex{},
 		ids:   internal.NewIDHeap(),
 		c:     make(chan struct{}, MaxQueue),
 	}
+
 	if err := queue.init(); err != nil {
 		return nil, err
 	}

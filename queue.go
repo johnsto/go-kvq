@@ -14,50 +14,25 @@ const (
 
 // Queue encapsulates a namespaced queue held by a DB.
 type Queue struct {
-	ns    []byte // namespace (key prefix)
-	db    *DB
+	backend.Queue
 	mutex *sync.Mutex
 	ids   *internal.IDHeap // IDs in queue
-	sync  bool             // true if transactions should be synced
 	c     chan struct{}    // item availability channel
 }
 
 // init populates the queue with all the IDs from the saved database.
 func (q *Queue) init() error {
-	it := q.db.Iterator()
-	defer it.Close()
-
-	// Seek to first key within namespace
-	if q.ns == nil {
-		it.SeekToFirst()
-	} else {
-		it.Seek(q.ns)
-	}
-
-	// Populate with read keys
-	for it.Valid() {
-		k := splitKey(q.ns, it.Key())
-		if k == nil {
-			// Key doesn't match namespace => past end
-			break
-		}
+	return q.ForEach(func(k, v []byte) error {
+		// Populate with read keys
 		id, err := internal.KeyToID(k)
 		if err != nil {
 			return err
 		}
+
 		q.ids.PushID(id)
 		q.c <- struct{}{}
-		it.Next()
-	}
-
-	return nil
-}
-
-// SetSync specifies if the LevelDB database should be sync'd to disk before
-// returning from any commit operations. Set this to true for increased
-// data durability at the cost of transaction commit time.
-func (q *Queue) SetSync(sync bool) {
-	q.sync = sync
+		return nil
+	})
 }
 
 // Size returns the number of keys currently available within the queue.
@@ -69,36 +44,18 @@ func (q Queue) Size() int {
 // Clear removes all entries in the DB. Do not call if any transactions are in
 // progress.
 func (q *Queue) Clear() error {
-	b := q.Batch()
-	it := q.db.Iterator()
-
-	// Seek to first key within namespace
-	if q.ns == nil {
-		it.SeekToFirst()
-	} else {
-		it.Seek(q.ns)
-	}
-
-	// Delete each key within namespace
-	for it.Valid() {
-		k := splitKey(q.ns, it.Key())
-		if k == nil {
-			break
-		}
-		b.Delete(it.Key())
-	}
-
-	// Write to disk
-	return b.Write()
+	return q.Queue.Clear()
 }
 
 // Transaction starts a new transaction on the queue.
 func (q *Queue) Transaction() *Txn {
 	return &Txn{
-		queue: q,
-		puts:  internal.NewIDHeap(),
-		takes: internal.NewIDHeap(),
-		mutex: &sync.Mutex{},
+		queue:      q,
+		puts:       internal.NewIDHeap(),
+		takes:      internal.NewIDHeap(),
+		putValues:  make([]kv, 0),
+		takeValues: make([][]byte, 0),
+		mutex:      &sync.Mutex{},
 	}
 }
 
@@ -113,27 +70,23 @@ func (q *Queue) putKey(ids ...internal.ID) {
 	}
 }
 
-// awaitKey finds the first key available for taking, removes it from the set of
-// keys and returns it to the caller. If the duration argument is greater than
-// 0, it will wait the prescribed time for a key to arrive before returning nil.
-func (q *Queue) awaitKey(t time.Duration) []byte {
-	select {
-	case <-q.c:
-		// Item immediately available
-		q.mutex.Lock()
-		defer q.mutex.Unlock()
-		return q.ids.PopID().Key()
-	default:
-		// Return immediately if user specified no timeout, otherwise wait
-		if t == 0 {
-			return nil
-		} else {
-			b := q.awaitKeys(1, t)
-			if len(b) == 1 {
-				return b[0]
-			} else {
-				return nil
+// getKeys returns upto `n` keys available for immediate taking, removing them
+// from the set of keys and returns them to the caller.
+func (q *Queue) getKeys(n int) [][]byte {
+	b := [][]byte{}
+	for {
+		select {
+		case <-q.c:
+			q.mutex.Lock()
+			k := q.ids.PopID().Key()
+			q.mutex.Unlock()
+			b = append(b, k)
+			if len(b) == n {
+				return b
 			}
+		default:
+			// Ran out of keys
+			return b
 		}
 	}
 }
@@ -142,6 +95,10 @@ func (q *Queue) awaitKey(t time.Duration) []byte {
 // of keys and returns them to the caller, waiting at most the specified amount
 // of time forkeys to become available before before returning nil.
 func (q *Queue) awaitKeys(n int, t time.Duration) [][]byte {
+	if t == 0 {
+		return q.getKeys(n)
+	}
+
 	cancel := make(chan struct{}, 0)
 	timeout := time.AfterFunc(t, func() {
 		close(cancel)
@@ -177,8 +134,7 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 
 	for i, k := range keys {
 		// retrieve value
-		dbk := joinKey(q.ns, k)
-		values[i], err = q.db.Get(dbk)
+		values[i], err = q.Queue.Get(k)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -188,40 +144,4 @@ func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, 
 	}
 
 	return ids, keys, values, err
-}
-
-// Batch creates a new batch for writing/deleting data from the queue.
-func (q *Queue) Batch() *QueueBatch {
-	return &QueueBatch{
-		queue: q,
-		batch: q.db.Batch(),
-	}
-}
-
-type QueueBatch struct {
-	queue *Queue
-	batch backend.Batch
-}
-
-func (b *QueueBatch) Put(k, v []byte) {
-	dbk := joinKey(b.queue.ns, k)
-	b.batch.Put(dbk, v)
-}
-
-func (b *QueueBatch) Delete(k []byte) {
-	dbk := joinKey(b.queue.ns, k)
-	b.batch.Delete(dbk)
-}
-
-// Write commits the data in the batch to the underlying database.
-func (b *QueueBatch) Write() error {
-	return b.batch.Write()
-}
-
-func (b *QueueBatch) Clear() {
-	b.batch.Clear()
-}
-
-func (b *QueueBatch) Close() {
-	b.batch.Close()
 }

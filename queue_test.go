@@ -11,27 +11,27 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Open(name string) (*DB, error) {
-	levidb, err := levigo.Open("queue.db")
+func Open(path string) (*DB, error) {
+	levidb, err := levigo.Open(path)
 	return NewDB(levidb), err
 }
 
-func Destroy(name string) error {
-	return levigo.Destroy(name)
+func Destroy(path string) error {
+	return levigo.Destroy(path)
 }
 
 // TestInit ensures that data are loaded again correctly from disk.
 func TestInit(t *testing.T) {
-	err := Destroy("queue.db")
+	path := "test-init.db"
+	err := Destroy(path)
 
 	// Open initial DB
-	db, err := Open("queue.db")
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
-	q.SetSync(true)
+	assert.NoError(t, err)
 
 	table := []string{"a", "b", "c"}
 
@@ -40,19 +40,16 @@ func TestInit(t *testing.T) {
 	for _, value := range table {
 		tx.Put([]byte(value))
 	}
-	tx.Commit()
-	tx.Close()
+	assert.NoError(t, tx.Commit())
+	assert.NoError(t, tx.Close())
 
 	// Re-open DB
 	db.Close()
-	db, err = Open("queue.db")
-	if err != nil {
-		log.Fatalln(err)
-	}
+	db, err = Open(path)
+	assert.NoError(t, err)
 
 	q, err = db.Queue("test")
-	assert.Nil(t, err)
-	q.SetSync(true)
+	assert.NoError(t, err)
 
 	// Read expected values
 	tx = q.Transaction()
@@ -61,38 +58,38 @@ func TestInit(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(value), v)
 	}
-	tx.Commit()
+	assert.NoError(t, tx.Commit())
 
 	// Re-open DB
 	db.Close()
-	db, err = Open("queue.db")
-	if err != nil {
-		log.Fatalln(err)
-	}
+	db, err = Open(path)
+	assert.NoError(t, err)
 
 	q, err = db.Queue("test")
-	assert.Nil(t, err)
-	q.SetSync(true)
+	assert.NoError(t, err)
 
 	// Ensure read values are now gone
 	tx = q.Transaction()
 	v, err := tx.Take()
 	assert.NoError(t, err)
 	assert.Nil(t, v)
-	tx.Close()
+	assert.NoError(t, tx.Close())
 	db.Close()
 }
 
 // TestQueueSingle tests a batch of puts and takes in a single transaction
 func TestQueueSingle(t *testing.T) {
-	err := Destroy("queue.db")
-	db, err := Open("queue.db")
+	log.Println("TestQueueSingle")
+	path := "test-queue-single.db"
+
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer db.Close()
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
@@ -113,7 +110,7 @@ func TestQueueSingle(t *testing.T) {
 
 	// Read data
 	rx := q.Transaction()
-	vs, err := rx.TakeN(50, time.Second)
+	vs, err := rx.TakeN(50, 10*time.Second)
 	assert.NoError(t, err)
 	for _, v := range vs {
 		assert.True(t, table[string(v)])
@@ -132,20 +129,22 @@ func TestQueueSingle(t *testing.T) {
 	rx = q.Transaction()
 	defer rx.Close()
 	v, err := rx.Take()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Nil(t, v)
 }
 
 // TestQueueMulti tests a series of puts/takes in a number of transactions
 func TestQueueMulti(t *testing.T) {
-	err := Destroy("queue.db")
-	db, err := Open("queue.db")
+	path := "test-queue-multi.db"
+
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer db.Close()
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
@@ -163,7 +162,7 @@ func TestQueueMulti(t *testing.T) {
 	for _, exp := range table {
 		rx := q.Transaction()
 		act, err := rx.Take()
-		assert.Nil(t, err)
+		assert.NoError(t, err)
 		assert.Equal(t, exp, string(act))
 		rx.Commit()
 	}
@@ -172,14 +171,16 @@ func TestQueueMulti(t *testing.T) {
 // TestQueueOrdered tests that items come out of the queue in the correct
 // order.
 func TestQueueOrdered(t *testing.T) {
-	err := Destroy("queue.db")
-	db, err := Open("queue.db")
+	path := "test-queue-ordered.db"
+
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer db.Close()
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
@@ -197,7 +198,7 @@ func TestQueueOrdered(t *testing.T) {
 	rx := q.Transaction()
 	for i := byte(0); i < 100; i++ {
 		act, err := rx.Take()
-		assert.Nil(t, err)
+		assert.NoError(t, err)
 		assert.Equal(t, []byte{i}, act)
 	}
 	rx.Commit()
@@ -206,14 +207,16 @@ func TestQueueOrdered(t *testing.T) {
 // TestQueueThreaded puts and takes items from a number of simultaneous
 // goroutines.
 func TestQueueThreaded(t *testing.T) {
-	err := Destroy("queue.db")
-	db, err := Open("queue.db")
+	path := "test-queue-threaded.db"
+
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer db.Close()
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	if err := q.Clear(); err != nil {
 		log.Fatalln(err)
 	}
@@ -223,7 +226,7 @@ func TestQueueThreaded(t *testing.T) {
 
 	inp := make(chan string)
 	outp := make(chan string)
-	active := true
+	quit := make(chan bool)
 	wg := &sync.WaitGroup{}
 
 	for i := 0; i < routines; i++ {
@@ -245,19 +248,26 @@ func TestQueueThreaded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			m := 0
+			active := true
 			for active {
-				rx := q.Transaction()
-				defer rx.Close()
-				v, err := rx.Take()
-				assert.NoError(t, err)
-				if v == nil {
-					time.Sleep(50 * time.Millisecond)
-				} else {
-					m++
-					outp <- string(v)
-					rx.Commit()
+				select {
+				case <-quit:
+					active = false
+					break
+				default:
+					rx := q.Transaction()
+					defer rx.Close()
+					v, err := rx.Take()
+					assert.NoError(t, err)
+					if v == nil {
+						time.Sleep(50 * time.Millisecond)
+					} else {
+						m++
+						outp <- string(v)
+						rx.Commit()
+					}
+					rx.Close()
 				}
-				rx.Close()
 			}
 			wg.Done()
 		}()
@@ -286,21 +296,25 @@ func TestQueueThreaded(t *testing.T) {
 	}
 	close(outp)
 
-	active = false
+	for i := 0; i < routines; i++ {
+		quit <- true
+	}
 	wg.Wait()
 }
 
 // TestPutDiscard tests that entries put into a transaction and then discarded
 // are not persisted.
 func TestPutDiscard(t *testing.T) {
-	Destroy("test.db")
+	path := "test-put-discard.db"
 
-	db, err := Open("test.db")
+	Destroy(path)
+
+	db, err := Open(path)
 	defer db.Close()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	// Put an entry into a transaction, but discard it
 	tx := q.Transaction()
@@ -310,7 +324,7 @@ func TestPutDiscard(t *testing.T) {
 	// Read an entry from queue and ensure nothing is received
 	rx := q.Transaction()
 	v, err := rx.Take()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Nil(t, v)
 	rx.Close()
 }
@@ -318,14 +332,15 @@ func TestPutDiscard(t *testing.T) {
 func TestTakeDiscard(t *testing.T) {
 	var err error
 
-	Destroy("test.db")
+	path := "test-take-discard.db"
+	Destroy(path)
 
-	db, err := Open("test.db")
+	db, err := Open(path)
 	defer db.Close()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	q, err := db.Queue("test")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	// Put an entry into a transaction
 	tx := q.Transaction()
@@ -338,55 +353,54 @@ func TestTakeDiscard(t *testing.T) {
 
 	rx = q.Transaction()
 	v, err = rx.Take()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Close()
 
 	rx = q.Transaction()
 	rx.Close()
 	v, err = rx.Take()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, []byte("test"), v)
 	rx.Commit()
 
 	rx = q.Transaction()
 	defer rx.Close()
 	v, err = rx.Take()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Nil(t, v)
 }
 
 // TestNamespaces tests that items in disparate namespaces are kept apart.
 func TestNamespaces(t *testing.T) {
-	Destroy("test.db")
+	path := "test-namespaces.db"
+	Destroy(path)
 
-	db, err := Open("test.db")
+	db, err := Open(path)
 	defer db.Close()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
 	qa, err := db.Queue("testa")
-	assert.Nil(t, err)
-	qa.SetSync(true)
+	assert.NoError(t, err)
 	qb, err := db.Queue("testb")
-	assert.Nil(t, err)
-	qb.SetSync(true)
+	assert.NoError(t, err)
 
 	// Write data to queue A
 	tx := qa.Transaction()
 	tx.Put([]byte("hello"))
-	tx.Commit()
+	assert.NoError(t, tx.Commit())
 
 	// Attempt to read from queue B
 	tx = qb.Transaction()
 	v, err := tx.Take()
 	assert.NoError(t, err)
 	assert.Nil(t, v)
-	tx.Close()
+	assert.NoError(t, tx.Close())
 
 	// Write data to queue B
 	tx = qb.Transaction()
 	tx.Put([]byte("world"))
-	tx.Commit()
+	assert.NoError(t, tx.Commit())
 
 	// Read from queue A
 	tx = qa.Transaction()
@@ -396,7 +410,7 @@ func TestNamespaces(t *testing.T) {
 	v, err = tx.Take()
 	assert.NoError(t, err)
 	assert.Nil(t, v)
-	tx.Close()
+	assert.NoError(t, tx.Close())
 
 	// Read from queue B
 	tx = qb.Transaction()
@@ -406,50 +420,34 @@ func TestNamespaces(t *testing.T) {
 	v, err = tx.Take()
 	assert.NoError(t, err)
 	assert.Nil(t, v)
-	tx.Close()
+	assert.NoError(t, tx.Close())
 }
 
 func BenchmarkPuts1(b *testing.B) {
-	benchmarkPuts(b, 1, false)
+	benchmarkPuts(b, 1)
 }
 
 func BenchmarkPuts10(b *testing.B) {
-	benchmarkPuts(b, 10, false)
+	benchmarkPuts(b, 10)
 }
 
 func BenchmarkPuts100(b *testing.B) {
-	benchmarkPuts(b, 100, false)
+	benchmarkPuts(b, 100)
 }
 
 func BenchmarkPuts1000(b *testing.B) {
-	benchmarkPuts(b, 1000, false)
+	benchmarkPuts(b, 1000)
 }
 
-func BenchmarkPutsSync1(b *testing.B) {
-	benchmarkPuts(b, 1, true)
-}
-
-func BenchmarkPutsSync10(b *testing.B) {
-	benchmarkPuts(b, 10, true)
-}
-
-func BenchmarkPutsSync100(b *testing.B) {
-	benchmarkPuts(b, 100, true)
-}
-
-func BenchmarkPutsSync1000(b *testing.B) {
-	benchmarkPuts(b, 1000, true)
-}
-
-func benchmarkPuts(b *testing.B, n int, sync bool) {
-	Destroy("benchmark.db")
-	db, err := Open("benchmark.db")
+func benchmarkPuts(b *testing.B, n int) {
+	path := "benchmark-puts.db"
+	Destroy(path)
+	db, err := Open(path)
 	assert.Nil(b, err)
 	defer db.Close()
 
 	q, err := db.Queue("test")
 	assert.Nil(b, err)
-	q.SetSync(sync)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -467,8 +465,9 @@ func benchmarkPuts(b *testing.B, n int, sync bool) {
 
 // BenchmarkTake benchmarks the speed at which items can be taken.
 func BenchmarkTake(b *testing.B) {
-	Destroy("benchmark.db")
-	db, err := Open("benchmark.db")
+	path := "benchmark-take.db"
+	Destroy(path)
+	db, err := Open(path)
 	assert.Nil(b, err)
 	defer db.Close()
 	q, err := db.Queue("test")
