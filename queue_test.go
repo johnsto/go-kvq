@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/johnsto/leviq/backend/levigo"
+	"github.com/johnsto/leviq/backend/bolt"
 	"github.com/stretchr/testify/assert"
 )
 
 func Open(path string) (*DB, error) {
-	levidb, err := levigo.Open(path)
+	levidb, err := bolt.Open(path)
 	return NewDB(levidb), err
 }
 
 func Destroy(path string) error {
-	return levigo.Destroy(path)
+	return bolt.Destroy(path)
 }
 
 // TestInit ensures that data are loaded again correctly from disk.

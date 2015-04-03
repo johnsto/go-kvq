@@ -116,14 +116,16 @@ func NewLevigoBatch(q *LevigoQueue) *LevigoBatch {
 	}
 }
 
-func (b *LevigoBatch) Put(k, v []byte) {
+func (b *LevigoBatch) Put(k, v []byte) error {
 	kk := append(b.ns[:], k...)
 	b.levigoWriteBatch.Put(kk, v)
+	return nil
 }
 
-func (b *LevigoBatch) Delete(k []byte) {
+func (b *LevigoBatch) Delete(k []byte) error {
 	kk := append(b.ns[:], k...)
 	b.levigoWriteBatch.Delete(kk)
+	return nil
 }
 
 func (b *LevigoBatch) Write() error {

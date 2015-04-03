@@ -13,7 +13,7 @@ type Queue interface {
 }
 
 type Batch interface {
-	Put(k, v []byte)
-	Delete(k []byte)
+	Put(k, v []byte) error
+	Delete(k []byte) error
 	Close()
 }

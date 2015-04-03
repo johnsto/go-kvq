@@ -1,6 +1,7 @@
 package leviq
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -88,6 +89,7 @@ func (txn *Txn) Commit() error {
 		return nil
 	}
 
+	log.Println("Batch!")
 	err := txn.queue.Batch(func(b backend.Batch) error {
 		for _, kv := range txn.putValues {
 			b.Put(kv.k, kv.v)

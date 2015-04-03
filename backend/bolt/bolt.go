@@ -2,18 +2,20 @@ package bolt
 
 import "github.com/johnsto/leviq/backend"
 import "github.com/boltdb/bolt"
+import "log"
+import "os"
 
 type BoltDB struct {
-	db *bolt.DB
+	boltDB *bolt.DB
 }
 
 // Destroy destroys the DB at the given path.
 func Destroy(path string) error {
-	return levigo.DestroyDatabase(path, levigo.NewOptions())
+	return os.RemoveAll(path)
 }
 
 func Open(path string) (*BoltDB, error) {
-	db, err := bolt.Open(path, 0600, nil)
+	db, err := bolt.Open(path, 0777, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -24,85 +26,76 @@ func NewBoltDB(db *bolt.DB) *BoltDB {
 	return &BoltDB{db}
 }
 
-func (db *BoltDB) Batch() backend.Batch {
-	return &BoltBatch{
-		db: db,
-		tx: db.db.Begin(true),
+func (db *BoltDB) Queue(name string) backend.Queue {
+	return &BoltQueue{
+		db:   db,
+		name: name,
 	}
-}
-
-func (db *BoltDB) Iterator() backend.Iterator {
-	ro := levigo.NewReadOptions()
-	defer ro.Close()
-
-	it := db.db.NewIterator(ro)
-	return &BoltIterator{
-		db: db,
-		it: it,
-	}
-}
-
-func (db *BoltDB) Get(k []byte) ([]byte, error) {
-	return db.Get(k), nil
 }
 
 func (db *BoltDB) Close() {
-	db.db.Close()
+	db.boltDB.Close()
+}
+
+type BoltQueue struct {
+	db   *BoltDB
+	name string
+}
+
+func (q *BoltQueue) ForEach(fn func(k, v []byte) error) error {
+	return q.db.boltDB.View(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
+		if err != nil {
+			return err
+		}
+		return bucket.ForEach(fn)
+	})
+}
+
+func (q *BoltQueue) Batch(fn func(backend.Batch) error) error {
+	log.Println("nbatch!")
+	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
+		log.Println(tx.Writable())
+		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
+		if err != nil {
+			return err
+		}
+		batch := &BoltBatch{
+			bucket: bucket,
+		}
+		return fn(batch)
+	})
+}
+
+func (q *BoltQueue) Get(k []byte) ([]byte, error) {
+	var v []byte
+	return v, q.db.boltDB.View(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists([]byte(q.name))
+		if err != nil {
+			return err
+		}
+		v = bucket.Get(k)
+		return nil
+	})
+}
+
+func (q *BoltQueue) Clear() error {
+	return q.db.boltDB.Update(func(tx *bolt.Tx) error {
+		return tx.DeleteBucket([]byte(q.name))
+	})
 }
 
 type BoltBatch struct {
-	db *BoltDB
-	tx *bolt.Tx
+	bucket *bolt.Bucket
 }
 
-func (b *BoltBatch) Put(k, v []byte) {
-	b.batch.Put(k, v)
+func (b *BoltBatch) Put(k, v []byte) error {
+	return b.bucket.Put(k, v)
 }
 
-func (b *BoltBatch) Delete(k []byte) {
-	b.batch.Delete(k)
-}
-
-func (b *BoltBatch) Write() error {
-	wo := levigo.NewWriteOptions()
-	wo.SetSync(true)
-	defer wo.Close()
-	return b.db.db.Write(wo, b.batch)
-}
-
-func (b *BoltBatch) Clear() {
-	b.batch.Clear()
+func (b *BoltBatch) Delete(k []byte) error {
+	return b.bucket.Delete(k)
 }
 
 func (b *BoltBatch) Close() {
-	b.batch.Close()
-}
-
-type BoltIterator struct {
-	db *BoltDB
-	it *levigo.Iterator
-}
-
-func (i BoltIterator) Seek(k []byte) {
-	i.it.Seek(k)
-}
-
-func (i BoltIterator) SeekToFirst() {
-	i.it.SeekToFirst()
-}
-
-func (i BoltIterator) Next() {
-	i.it.Next()
-}
-
-func (i BoltIterator) Valid() bool {
-	return i.it.Valid()
-}
-
-func (i BoltIterator) Key() []byte {
-	return i.it.Key()
-}
-
-func (i BoltIterator) Close() {
-	i.it.Close()
 }
