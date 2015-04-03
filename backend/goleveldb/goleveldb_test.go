@@ -5,7 +5,7 @@ import "github.com/johnsto/leviq/tests"
 import "testing"
 
 func OpenDB(path string) (*leviq.DB, error) {
-	db, err := NewMemDB() //Open(path)
+	db, err := Open(path)
 	if err != nil {
 		return nil, err
 	}
