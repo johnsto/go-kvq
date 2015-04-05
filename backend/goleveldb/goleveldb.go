@@ -1,6 +1,7 @@
 package goleveldb
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/johnsto/leviq"
@@ -47,9 +48,18 @@ func NewMem() (*leviq.DB, error) {
 
 // Bucket returns a queue in the given namespace.
 func (db *DB) Bucket(name string) (backend.Bucket, error) {
+	// Prefix namespace with length to avoid conflicts between namespaces
+	// (e.g. "test" and "testing")
+	if len(name) > 0xff {
+		return nil, fmt.Errorf("namespace must be <255 chars")
+	}
+
+	n := byte(len(name))
+	ns := append([]byte{n}, []byte(name)...)
+
 	return &Bucket{
 		db: db,
-		ns: []byte(name),
+		ns: ns,
 	}, nil
 }
 
@@ -58,7 +68,8 @@ func (db *DB) Close() {
 	db.levelDB.Close()
 }
 
-// Bucket represents a goleveldb-backed queue.
+// Bucket represents a goleveldb-backed queue, where each key is prefixed by
+// the given namespace. All batch writes are synced by default.
 type Bucket struct {
 	db *DB
 	ns []byte
@@ -87,16 +98,20 @@ func (q *Bucket) ForEach(fn func(k, v []byte) error) error {
 // is returned to the caller. If the batch function returns nil, the batch
 // is committed to the queue.
 func (q *Bucket) Batch(fn func(backend.Batch) error) error {
+	b := &leveldb.Batch{}
 	batch := &Batch{
 		ns:         q.ns,
 		levelDB:    q.db.levelDB,
-		levelBatch: &leveldb.Batch{},
+		levelBatch: b,
 	}
 	defer batch.Close()
+
 	if err := fn(batch); err != nil {
 		return err
 	}
-	return batch.Write()
+
+	wo := &opt.WriteOptions{Sync: true}
+	return q.db.levelDB.Write(b, wo)
 }
 
 // Get returns the value stored at key `k`.
@@ -129,27 +144,21 @@ type Batch struct {
 	ns         []byte
 }
 
+// Put sets the key `k` to value `v`.
 func (b *Batch) Put(k, v []byte) error {
 	kk := append(b.ns[:], k...)
 	b.levelBatch.Put(kk, v)
 	return nil
 }
 
+// Delete deletes the key `k`.
 func (b *Batch) Delete(k []byte) error {
 	kk := append(b.ns[:], k...)
 	b.levelBatch.Delete(kk)
 	return nil
 }
 
-func (b *Batch) Write() error {
-	wo := &opt.WriteOptions{Sync: true}
-	return b.levelDB.Write(b.levelBatch, wo)
-}
-
-func (b *Batch) Clear() {
-	b.levelBatch.Reset()
-}
-
+// Close discards this batch.
 func (b *Batch) Close() {
 	b.levelBatch.Reset()
 }

@@ -1,8 +1,10 @@
 package goleveldb
 
-import "github.com/johnsto/leviq"
-import "github.com/johnsto/leviq/tests"
-import "testing"
+import (
+	"github.com/johnsto/leviq"
+	"github.com/johnsto/leviq/backend/test"
+	"testing"
+)
 
 func OpenDB(path string) (*leviq.DB, error) {
 	db, err := Open(path)
@@ -13,53 +15,53 @@ func OpenDB(path string) (*leviq.DB, error) {
 }
 
 func TestInit(t *testing.T) {
-	tests.TestInit(t, OpenDB, Destroy)
+	test.TestInit(t, OpenDB, Destroy)
 }
 
 func TestQueueSingle(t *testing.T) {
-	tests.TestQueueSingle(t, OpenDB, Destroy)
+	test.TestQueueSingle(t, OpenDB, Destroy)
 }
 
 func TestQueueMulti(t *testing.T) {
-	tests.TestQueueMulti(t, OpenDB, Destroy)
+	test.TestQueueMulti(t, OpenDB, Destroy)
 }
 
 func TestQueueOrdered(t *testing.T) {
-	tests.TestQueueOrdered(t, OpenDB, Destroy)
+	test.TestQueueOrdered(t, OpenDB, Destroy)
 }
 
 func TestQueueThreaded(t *testing.T) {
-	tests.TestQueueThreaded(t, OpenDB, Destroy)
+	test.TestQueueThreaded(t, OpenDB, Destroy)
 }
 
 func TestPutDiscard(t *testing.T) {
-	tests.TestPutDiscard(t, OpenDB, Destroy)
+	test.TestPutDiscard(t, OpenDB, Destroy)
 }
 
 func TestTakeDiscard(t *testing.T) {
-	tests.TestTakeDiscard(t, OpenDB, Destroy)
+	test.TestTakeDiscard(t, OpenDB, Destroy)
 }
 
 func TestNamespaces(t *testing.T) {
-	tests.TestNamespaces(t, OpenDB, Destroy)
+	test.TestNamespaces(t, OpenDB, Destroy)
 }
 
 func BenchmarkPuts1(b *testing.B) {
-	tests.BenchmarkPuts1(b, OpenDB, Destroy)
+	test.BenchmarkPuts1(b, OpenDB, Destroy)
 }
 
 func BenchmarkPuts10(b *testing.B) {
-	tests.BenchmarkPuts10(b, OpenDB, Destroy)
+	test.BenchmarkPuts10(b, OpenDB, Destroy)
 }
 
 func BenchmarkPuts100(b *testing.B) {
-	tests.BenchmarkPuts100(b, OpenDB, Destroy)
+	test.BenchmarkPuts100(b, OpenDB, Destroy)
 }
 
 func BenchmarkPuts1000(b *testing.B) {
-	tests.BenchmarkPuts1000(b, OpenDB, Destroy)
+	test.BenchmarkPuts1000(b, OpenDB, Destroy)
 }
 
 func BenchmarkTake(b *testing.B) {
-	tests.BenchmarkTake(b, OpenDB, Destroy)
+	test.BenchmarkTake(b, OpenDB, Destroy)
 }

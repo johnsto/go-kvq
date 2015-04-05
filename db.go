@@ -7,10 +7,12 @@ import (
 	"github.com/johnsto/leviq/internal"
 )
 
+// DB wraps the backend being used.
 type DB struct {
 	backend.DB
 }
 
+// NewDB creates a new DB instance from a backend database.
 func NewDB(db backend.DB) *DB {
 	return &DB{db}
 }
