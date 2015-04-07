@@ -1,10 +1,7 @@
 package leviq
 
 import (
-	"sync"
-
 	"github.com/johnsto/leviq/backend"
-	"github.com/johnsto/leviq/internal"
 )
 
 // DB wraps the backend being used.
@@ -21,19 +18,5 @@ func NewDB(db backend.DB) *DB {
 // are prefixed with the namespace value and a NUL byte, followed by the
 // ID of the queued item.
 func (db *DB) Queue(namespace string) (*Queue, error) {
-	bucket, err := db.DB.Bucket(namespace)
-	if err != nil {
-		return nil, err
-	}
-	queue := &Queue{
-		bucket: bucket,
-		mutex:  &sync.Mutex{},
-		ids:    internal.NewIDHeap(),
-		c:      make(chan struct{}, MaxQueue),
-	}
-
-	if err := queue.init(); err != nil {
-		return nil, err
-	}
-	return queue, nil
+	return NewQueue(db.DB, namespace, nil)
 }

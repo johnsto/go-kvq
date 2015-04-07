@@ -6,7 +6,7 @@ type Open func(path string) (DB, error)
 // Destroy destroys the database at the given path.
 type Destroy func(path string) error
 
-// DB represents a set of namespaced queues.
+// DB represents a set of namespaced buckets.
 type DB interface {
 	// Bucket returns a bucket in the given namespace.
 	Bucket(name string) (Bucket, error)

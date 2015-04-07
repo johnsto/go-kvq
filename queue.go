@@ -9,7 +9,22 @@ import (
 )
 
 const (
-	MaxQueue int = 1e6
+	// DefaultMaxQueue is the default maximum queue capacity.
+	DefaultMaxQueue int = 1e6
+)
+
+// QueueOptions specifies the operational parameters of a queue
+type QueueOptions struct {
+	// MaxQueue is the capacity of the queue. Items will start to be rejected
+	// if the queue reaches this size.
+	MaxQueue int
+}
+
+var (
+	// DefaultOptions holds the default settings to use when creating a queue.
+	DefaultOptions = QueueOptions{
+		MaxQueue: DefaultMaxQueue,
+	}
 )
 
 // Queue encapsulates a namespaced queue held by a DB.
@@ -18,6 +33,30 @@ type Queue struct {
 	mutex  *sync.Mutex
 	ids    *internal.IDHeap // IDs in queue
 	c      chan struct{}    // item availability channel
+}
+
+// NewQueue instantiates a new queue from the given database and namespace.
+func NewQueue(db backend.DB, namespace string, opts *QueueOptions) (*Queue, error) {
+	if opts == nil {
+		opts = &DefaultOptions
+	}
+
+	bucket, err := db.Bucket(namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	queue := &Queue{
+		bucket: bucket,
+		mutex:  &sync.Mutex{},
+		ids:    internal.NewIDHeap(),
+		c:      make(chan struct{}, opts.MaxQueue),
+	}
+	if err := queue.init(); err != nil {
+		return nil, err
+	}
+
+	return queue, nil
 }
 
 // init populates the queue with all the IDs from the saved database.
