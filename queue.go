@@ -1,6 +1,7 @@
 package leviq
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -25,7 +26,15 @@ var (
 	DefaultOptions = QueueOptions{
 		MaxQueue: DefaultMaxQueue,
 	}
+	// ErrInsufficientCapacity is returned if the queue does not have enough
+	// space to add the requested item(s).
+	ErrInsufficientCapacity = errors.New("insufficient queue capacity")
 )
+
+type kv struct {
+	k []byte
+	v []byte
+}
 
 // Queue encapsulates a namespaced queue held by a DB.
 type Queue struct {
@@ -88,25 +97,34 @@ func (q *Queue) Clear() error {
 
 // Transaction starts a new transaction on the queue.
 func (q *Queue) Transaction() *Txn {
-	return &Txn{
-		queue:      q,
-		puts:       internal.NewIDHeap(),
-		takes:      internal.NewIDHeap(),
-		putValues:  make([]kv, 0),
-		takeValues: make([][]byte, 0),
-		mutex:      &sync.Mutex{},
-	}
+	return NewTxn(q)
 }
 
 // putKeys adds the ID(s) to the queue, indicating entries that are immediately
-// available for taking.
-func (q *Queue) putKey(ids ...internal.ID) {
+// available for taking. Returns number of keys added successfully.
+func (q *Queue) putKey(ids ...internal.ID) (int, error) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	for _, id := range ids {
-		q.ids.PushID(id)
-		q.c <- struct{}{}
+
+	// Fail immediately if there isn't enough room in the IDs channel
+	if cap(q.c)-len(q.c) < len(ids) {
+		return 0, ErrInsufficientCapacity
 	}
+
+	// Add each item to the availability channel
+	n := 0
+	for _, id := range ids {
+		select {
+		case q.c <- struct{}{}:
+			q.ids.PushID(id)
+			n++
+		default:
+			// This case shouldn't happen in practise, but better to catch
+			// than block.
+			return n, ErrInsufficientCapacity
+		}
+	}
+	return n, nil
 }
 
 // getKeys returns upto `n` keys available for immediate taking, removing them
@@ -116,10 +134,12 @@ func (q *Queue) getKeys(n int) [][]byte {
 	for {
 		select {
 		case <-q.c:
+			// Key became available, add to list of returned values
 			q.mutex.Lock()
 			k := q.ids.PopID().Key()
 			q.mutex.Unlock()
 			b = append(b, k)
+			// Have we got enough values now?
 			if len(b) == n {
 				return b
 			}
@@ -135,6 +155,7 @@ func (q *Queue) getKeys(n int) [][]byte {
 // of time forkeys to become available before before returning nil.
 func (q *Queue) awaitKeys(n int, t time.Duration) [][]byte {
 	if t == 0 {
+		// Special case - get keys directly without timeout if duration is zero
 		return q.getKeys(n)
 	}
 
@@ -144,19 +165,22 @@ func (q *Queue) awaitKeys(n int, t time.Duration) [][]byte {
 	})
 	defer timeout.Stop()
 
+	// Listen for available keys
 	b := [][]byte{}
 	for {
 		select {
 		case <-q.c:
+			// Key became available, add to list of returned values
 			q.mutex.Lock()
 			k := q.ids.PopID().Key()
 			q.mutex.Unlock()
 			b = append(b, k)
+			// Have we got enough values now?
 			if len(b) == n {
 				return b
 			}
 		case <-cancel:
-			// Timed out
+			// Timed out; return whatever values we got in that time
 			return b
 		}
 	}
@@ -164,23 +188,35 @@ func (q *Queue) awaitKeys(n int, t time.Duration) [][]byte {
 
 // take takes `n` elements from the queue, waiting at most `t` to retrieve them.
 func (q *Queue) take(n int, t time.Duration) (ids []internal.ID, keys [][]byte, values [][]byte, err error) {
-	// get next available key
+	// Fetch available keys
 	keys = q.awaitKeys(n, t)
 
+	// Setup return structures
 	n = len(keys)
 	ids = make([]internal.ID, n)
 	values = make([][]byte, n)
 
+	// Populate return structures
 	for i, k := range keys {
-		// retrieve value
 		values[i], err = q.bucket.Get(k)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-
-		// key => id
 		ids[i], err = internal.KeyToID(k)
 	}
 
 	return ids, keys, values, err
+}
+
+// enact puts and takes the given key values to the underlying storage.
+func (q *Queue) enact(puts, takes []kv) error {
+	return q.bucket.Batch(func(b backend.Batch) error {
+		for _, kv := range puts {
+			b.Put(kv.k, kv.v)
+		}
+		for _, kv := range takes {
+			b.Delete(kv.k)
+		}
+		return nil
+	})
 }

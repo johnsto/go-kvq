@@ -1,4 +1,4 @@
-package test
+package leviq
 
 import (
 	"log"
@@ -7,20 +7,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/johnsto/leviq"
 	"github.com/stretchr/testify/assert"
 )
 
-type OpenDB func(path string) (*leviq.DB, error)
-type DestroyDB func(path string) error
-
 // TestInit ensures that data are loaded again correctly from disk.
-func TestInit(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestInit(t *testing.T) {
 	path := "test-init.db"
-	err := destroy(path)
+	err := Destroy(path)
 
 	// Open initial DB
-	db, err := open(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -39,7 +35,7 @@ func TestInit(t *testing.T, open OpenDB, destroy DestroyDB) {
 
 	// Re-open DB
 	db.Close()
-	db, err = open(path)
+	db, err = Open(path)
 	assert.NoError(t, err)
 
 	q, err = db.Queue("test")
@@ -56,7 +52,7 @@ func TestInit(t *testing.T, open OpenDB, destroy DestroyDB) {
 
 	// Re-open DB
 	db.Close()
-	db, err = open(path)
+	db, err = Open(path)
 	assert.NoError(t, err)
 
 	q, err = db.Queue("test")
@@ -72,11 +68,11 @@ func TestInit(t *testing.T, open OpenDB, destroy DestroyDB) {
 }
 
 // TestQueueSingle tests a batch of puts and takes in a single transaction
-func TestQueueSingle(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestQueueSingle(t *testing.T) {
 	path := "test-queue-single.db"
 
-	err := destroy(path)
-	db, err := open(path)
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -127,11 +123,11 @@ func TestQueueSingle(t *testing.T, open OpenDB, destroy DestroyDB) {
 }
 
 // TestQueueMulti tests a series of puts/takes in a number of transactions
-func TestQueueMulti(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestQueueMulti(t *testing.T) {
 	path := "test-queue-multi.db"
 
-	err := destroy(path)
-	db, err := open(path)
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -163,11 +159,11 @@ func TestQueueMulti(t *testing.T, open OpenDB, destroy DestroyDB) {
 
 // TestQueueOrdered tests that items come out of the queue in the correct
 // order.
-func TestQueueOrdered(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestQueueOrdered(t *testing.T) {
 	path := "test-queue-ordered.db"
 
-	err := destroy(path)
-	db, err := open(path)
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -199,11 +195,11 @@ func TestQueueOrdered(t *testing.T, open OpenDB, destroy DestroyDB) {
 
 // TestQueueThreaded puts and takes items from a number of simultaneous
 // goroutines.
-func TestQueueThreaded(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestQueueThreaded(t *testing.T) {
 	path := "test-queue-threaded.db"
 
-	err := destroy(path)
-	db, err := open(path)
+	err := Destroy(path)
+	db, err := Open(path)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -297,12 +293,12 @@ func TestQueueThreaded(t *testing.T, open OpenDB, destroy DestroyDB) {
 
 // TestPutDiscard tests that entries put into a transaction and then discarded
 // are not persisted.
-func TestPutDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestPutDiscard(t *testing.T) {
 	path := "test-put-discard.db"
 
-	destroy(path)
+	Destroy(path)
 
-	db, err := open(path)
+	db, err := Open(path)
 	defer db.Close()
 	assert.NoError(t, err)
 
@@ -322,13 +318,13 @@ func TestPutDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
 	rx.Close()
 }
 
-func TestTakeDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestTakeDiscard(t *testing.T) {
 	var err error
 
 	path := "test-take-discard.db"
-	destroy(path)
+	Destroy(path)
 
-	db, err := open(path)
+	db, err := Open(path)
 	defer db.Close()
 	assert.NoError(t, err)
 
@@ -341,7 +337,7 @@ func TestTakeDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
 	assert.Nil(t, tx.Put([]byte("test")))
 	tx.Commit()
 
-	var rx *leviq.Txn
+	var rx *Txn
 	var v []byte
 
 	rx = q.Transaction()
@@ -365,11 +361,11 @@ func TestTakeDiscard(t *testing.T, open OpenDB, destroy DestroyDB) {
 }
 
 // TestNamespaces tests that items in disparate namespaces are kept apart.
-func TestNamespaces(t *testing.T, open OpenDB, destroy DestroyDB) {
+func TestNamespaces(t *testing.T) {
 	path := "test-namespaces.db"
-	destroy(path)
+	Destroy(path)
 
-	db, err := open(path)
+	db, err := Open(path)
 	defer db.Close()
 	assert.NoError(t, err)
 
@@ -416,26 +412,26 @@ func TestNamespaces(t *testing.T, open OpenDB, destroy DestroyDB) {
 	assert.NoError(t, tx.Close())
 }
 
-func BenchmarkPuts1(b *testing.B, open OpenDB, destroy DestroyDB) {
-	benchmarkPuts(b, open, destroy, 1)
+func BenchmarkPuts1(b *testing.B) {
+	benchmarkPuts(b, 1)
 }
 
-func BenchmarkPuts10(b *testing.B, open OpenDB, destroy DestroyDB) {
-	benchmarkPuts(b, open, destroy, 10)
+func BenchmarkPuts10(b *testing.B) {
+	benchmarkPuts(b, 10)
 }
 
-func BenchmarkPuts100(b *testing.B, open OpenDB, destroy DestroyDB) {
-	benchmarkPuts(b, open, destroy, 100)
+func BenchmarkPuts100(b *testing.B) {
+	benchmarkPuts(b, 100)
 }
 
-func BenchmarkPuts1000(b *testing.B, open OpenDB, destroy DestroyDB) {
-	benchmarkPuts(b, open, destroy, 1000)
+func BenchmarkPuts1000(b *testing.B) {
+	benchmarkPuts(b, 1000)
 }
 
-func benchmarkPuts(b *testing.B, open OpenDB, destroy DestroyDB, n int) {
+func benchmarkPuts(b *testing.B, n int) {
 	path := "benchmark-puts.db"
-	destroy(path)
-	db, err := open(path)
+	Destroy(path)
+	db, err := Open(path)
 	assert.Nil(b, err)
 	defer db.Close()
 
@@ -457,18 +453,18 @@ func benchmarkPuts(b *testing.B, open OpenDB, destroy DestroyDB, n int) {
 }
 
 // BenchmarkTake benchmarks the speed at which items can be taken.
-func BenchmarkTake(b *testing.B, open OpenDB, destroy DestroyDB) {
+func BenchmarkTake(b *testing.B) {
 	path := "benchmark-take.db"
-	destroy(path)
-	db, err := open(path)
+	Destroy(path)
+	db, err := Open(path)
 	assert.Nil(b, err)
 	defer db.Close()
 	q, err := db.Queue("test")
 	assert.Nil(b, err)
-	benchmarkTake(b, open, destroy, q)
+	benchmarkTake(b, q)
 }
 
-func benchmarkTake(b *testing.B, open OpenDB, destroy DestroyDB, q *leviq.Queue) {
+func benchmarkTake(b *testing.B, q *Queue) {
 	// Seed DB with items to take
 	tx := q.Transaction()
 	defer tx.Close()

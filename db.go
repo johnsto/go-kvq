@@ -2,11 +2,24 @@ package leviq
 
 import (
 	"github.com/johnsto/leviq/backend"
+	"github.com/johnsto/leviq/backend/goleveldb"
 )
 
 // DB wraps the backend being used.
 type DB struct {
 	backend.DB
+}
+
+func Open(path string) (*DB, error) {
+	db, err := goleveldb.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &DB{db}, nil
+}
+
+func Destroy(path string) error {
+	return goleveldb.Destroy(path)
 }
 
 // NewDB creates a new DB instance from a backend database.

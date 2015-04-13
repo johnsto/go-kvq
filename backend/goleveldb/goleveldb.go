@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/johnsto/leviq"
 	"github.com/johnsto/leviq/backend"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -18,12 +17,12 @@ type DB struct {
 }
 
 // Open creates or opens an existing DB at the given path.
-func Open(path string) (*leviq.DB, error) {
+func Open(path string) (backend.DB, error) {
 	levelDB, err := leveldb.OpenFile(path, nil)
 	if err != nil {
 		return nil, err
 	}
-	return New(levelDB), nil
+	return &DB{levelDB}, nil
 }
 
 // Destroy destroys the DB at the given path.
@@ -32,18 +31,18 @@ func Destroy(path string) error {
 }
 
 // New returns a DB from the given LevelDB instance.
-func New(db *leveldb.DB) *leviq.DB {
-	return leviq.NewDB(&DB{db})
+func New(db *leveldb.DB) backend.DB {
+	return &DB{db}
 }
 
 // NewMem creates a new DB backed by memory only (i.e. not persistent)
-func NewMem() (*leviq.DB, error) {
+func NewMem() (backend.DB, error) {
 	storage := storage.NewMemStorage()
 	levelDB, err := leveldb.Open(storage, nil)
 	if err != nil {
 		return nil, err
 	}
-	return New(levelDB), nil
+	return &DB{levelDB}, nil
 }
 
 // Bucket returns a queue in the given namespace.
