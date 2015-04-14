@@ -116,7 +116,11 @@ func (q *Bucket) Batch(fn func(backend.Batch) error) error {
 // Get returns the value stored at key `k`.
 func (q *Bucket) Get(k []byte) ([]byte, error) {
 	kk := append(q.ns[:], k...)
-	return q.db.levelDB.Get(kk, nil)
+	vv, err := q.db.levelDB.Get(kk, nil)
+	if err == leveldb.ErrNotFound {
+		return nil, backend.ErrKeyNotFound
+	}
+	return vv, err
 }
 
 // Clear removes all items from this queue.

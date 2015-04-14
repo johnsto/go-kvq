@@ -1,5 +1,13 @@
 package backend
 
+import (
+	"errors"
+)
+
+var (
+	ErrKeyNotFound = errors.New("requested key not found")
+)
+
 // Open opens a database at the given path.
 type Open func(path string) (DB, error)
 
@@ -20,7 +28,7 @@ type Bucket interface {
 	// returns a non-nil error, iteration stops and the error is returned to
 	// the caller.
 	ForEach(fn func(k, v []byte) error) error
-	// Batch enacts a number of operations in one atomic go. If the batch
+	// Batch enacts a number of operations in one atomic call. If the batch
 	// function returns a non-nil error, the batch is discarded and the error
 	// is returned to the caller. If the batch function returns nil, the batch
 	// is committed to the queue.

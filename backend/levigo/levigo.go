@@ -83,7 +83,11 @@ func (q *Bucket) Get(k []byte) ([]byte, error) {
 	ro := levigo.NewReadOptions()
 	defer ro.Close()
 	kk := append(q.ns[:], k...)
-	return q.db.levigoDB.Get(ro, kk)
+	vv, err := q.db.levigoDB.Get(ro, kk)
+	if vv == nil {
+		return nil, backend.ErrKeyNotFound
+	}
+	return vv, err
 }
 
 func (q *Bucket) Clear() error {

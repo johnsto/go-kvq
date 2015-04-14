@@ -90,6 +90,9 @@ func (q *Bucket) Get(k []byte) ([]byte, error) {
 			return err
 		}
 		v = bucket.Get(k)
+		if v == nil {
+			return backend.ErrKeyNotFound
+		}
 		return nil
 	})
 }
