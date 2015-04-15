@@ -1,4 +1,4 @@
-package leviq
+package kvq
 
 import (
 	"log"

@@ -2,8 +2,8 @@ package bolt
 
 import (
 	"github.com/boltdb/bolt"
-	"github.com/johnsto/leviq"
-	"github.com/johnsto/leviq/backend"
+	"github.com/johnsto/kvq"
+	"github.com/johnsto/kvq/backend"
 	"os"
 )
 
@@ -19,7 +19,7 @@ func Destroy(path string) error {
 
 // Open returns a DB instance from the Bolt database at the given path, using
 // default parameters.
-func Open(path string) (*leviq.DB, error) {
+func Open(path string) (*kvq.DB, error) {
 	db, err := bolt.Open(path, 0777, nil)
 	if err != nil {
 		return nil, err
@@ -28,8 +28,8 @@ func Open(path string) (*leviq.DB, error) {
 }
 
 // New returns a DB from the given Bolt DB instance.
-func New(db *bolt.DB) *leviq.DB {
-	return leviq.NewDB(&DB{db})
+func New(db *bolt.DB) *kvq.DB {
+	return kvq.NewDB(&DB{db})
 }
 
 // Bucket returns a queue in the given namespace.

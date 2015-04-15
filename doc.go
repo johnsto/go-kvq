@@ -1,6 +1,6 @@
 /*
 
-Package leviq is a persistent transactional queue. It supports goleveldb, levigo and Bolt as backends.
+Package kvq is a persistent transactional queue. It supports goleveldb, levigo and Bolt as backends.
 
 To open a queue, first get a database instance, and then the queue itself. A DB can contain many queues of different names.
 
@@ -40,4 +40,4 @@ is committed. Similarly, any items taken in a transaction are made available
 again if the transaction is closed without being committed.
 
 */
-package leviq // import "github.com/johnsto/leviq"
+package kvq // import "github.com/johnsto/kvq"

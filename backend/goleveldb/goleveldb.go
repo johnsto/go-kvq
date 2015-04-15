@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/johnsto/leviq/backend"
+	"github.com/johnsto/kvq/backend"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"

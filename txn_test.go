@@ -1,12 +1,12 @@
-package leviq
+package kvq
 
 import (
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/johnsto/leviq/backend"
-	"github.com/johnsto/leviq/internal"
+	"github.com/johnsto/kvq/backend"
+	"github.com/johnsto/kvq/internal"
 	"github.com/stretchr/testify/assert"
 )
 

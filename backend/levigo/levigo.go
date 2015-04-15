@@ -3,15 +3,15 @@ package levigo
 import (
 	"bytes"
 	"github.com/jmhodges/levigo"
-	"github.com/johnsto/leviq"
-	"github.com/johnsto/leviq/backend"
+	"github.com/johnsto/kvq"
+	"github.com/johnsto/kvq/backend"
 )
 
 type DB struct {
 	levigoDB *levigo.DB
 }
 
-func Open(path string) (*leviq.DB, error) {
+func Open(path string) (*kvq.DB, error) {
 	opts := levigo.NewOptions()
 	opts.SetCreateIfMissing(true)
 	db, err := levigo.Open(path, opts)
@@ -26,8 +26,8 @@ func Destroy(path string) error {
 	return levigo.DestroyDatabase(path, levigo.NewOptions())
 }
 
-func New(db *levigo.DB) *leviq.DB {
-	return leviq.NewDB(&DB{db})
+func New(db *levigo.DB) *kvq.DB {
+	return kvq.NewDB(&DB{db})
 }
 
 func (db *DB) Bucket(name string) (backend.Bucket, error) {

@@ -1,10 +1,10 @@
-package leviq
+package kvq
 
 import (
 	"sync"
 	"time"
 
-	"github.com/johnsto/leviq/internal"
+	"github.com/johnsto/kvq/internal"
 )
 
 // Txn represents a transaction on a Queue

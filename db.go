@@ -1,8 +1,8 @@
-package leviq
+package kvq
 
 import (
-	"github.com/johnsto/leviq/backend"
-	"github.com/johnsto/leviq/backend/goleveldb"
+	"github.com/johnsto/kvq/backend"
+	"github.com/johnsto/kvq/backend/goleveldb"
 )
 
 // DB wraps the backend being used.
