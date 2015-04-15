@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/johnsto/kvq/backend"
-	"github.com/johnsto/kvq/internal"
+	"github.com/johnsto/go-kvq/kvq/backend"
+	"github.com/johnsto/go-kvq/kvq/internal"
 )
 
 const (

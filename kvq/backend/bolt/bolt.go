@@ -2,8 +2,8 @@ package bolt
 
 import (
 	"github.com/boltdb/bolt"
-	"github.com/johnsto/kvq"
-	"github.com/johnsto/kvq/backend"
+	"github.com/johnsto/go-kvq/kvq"
+	"github.com/johnsto/go-kvq/kvq/backend"
 	"os"
 )
 

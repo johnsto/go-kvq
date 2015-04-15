@@ -1,8 +1,8 @@
 package kvq
 
 import (
-	"github.com/johnsto/kvq/backend"
-	"github.com/johnsto/kvq/backend/goleveldb"
+	"github.com/johnsto/go-kvq/kvq/backend"
+	"github.com/johnsto/go-kvq/kvq/backend/goleveldb"
 )
 
 // DB wraps the backend being used.

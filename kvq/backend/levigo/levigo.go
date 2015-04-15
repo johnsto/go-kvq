@@ -3,8 +3,8 @@ package levigo
 import (
 	"bytes"
 	"github.com/jmhodges/levigo"
-	"github.com/johnsto/kvq"
-	"github.com/johnsto/kvq/backend"
+	"github.com/johnsto/go-kvq/kvq"
+	"github.com/johnsto/go-kvq/kvq/backend"
 )
 
 type DB struct {

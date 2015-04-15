@@ -10,7 +10,7 @@ the native bytewise key ordering provided by LevelDB derivatives. Multiple
 queues may be created within a database, but may not be shared by different
 processes (multiple threads may share a queue safely, however.)
 
-Documentation is available on [GoDoc](https://godoc.org/github.com/johnsto/go-kvq) and [Go Walker](https://gowalker.org/github.com/johnsto/go-kvq).
+*Documentation*: [GoDoc](https://godoc.org/github.com/johnsto/go-kvq/kvq), [Go Walker](https://gowalker.org/github.com/johnsto/go-kvq/kvq).
 
 This code is not in production use, so tread carefully.
 
@@ -22,7 +22,7 @@ package main
 import (
 	"time"
 
-	"github.com/johnsto/go-kvq"
+	"github.com/johnsto/go-kvq/kvq"
 )
 
 func main() {
@@ -70,5 +70,5 @@ for completeness.
 
 ### Adding another backend
 Adding support for another backend is as simple as implementing the interfaces
-defined in `github.com/johnsto/go-kvq/backend`. See the provided
+defined in `github.com/johnsto/go-kvq/kvq/backend`. See the provided
 implementations for examples.

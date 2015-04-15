@@ -3,10 +3,10 @@ package backend_test
 import (
 	"testing"
 
-	. "github.com/johnsto/kvq/backend"
-	"github.com/johnsto/kvq/backend/bolt"
-	"github.com/johnsto/kvq/backend/goleveldb"
-	"github.com/johnsto/kvq/backend/levigo"
+	. "github.com/johnsto/go-kvq/kvq/backend"
+	"github.com/johnsto/go-kvq/kvq/backend/bolt"
+	"github.com/johnsto/go-kvq/kvq/backend/goleveldb"
+	"github.com/johnsto/go-kvq/kvq/backend/levigo"
 	"github.com/stretchr/testify/assert"
 )
 

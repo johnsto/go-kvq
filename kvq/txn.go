@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/johnsto/kvq/internal"
+	"github.com/johnsto/go-kvq/kvq/internal"
 )
 
 // Txn represents a transaction on a Queue

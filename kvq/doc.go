@@ -40,4 +40,4 @@ is committed. Similarly, any items taken in a transaction are made available
 again if the transaction is closed without being committed.
 
 */
-package kvq // import "github.com/johnsto/kvq"
+package kvq // import "github.com/johnsto/go-kvq/kvq"
