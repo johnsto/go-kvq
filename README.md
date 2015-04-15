@@ -10,9 +10,9 @@ the native bytewise key ordering provided by LevelDB derivatives. Multiple
 queues may be created within a database, but may not be shared by different
 processes (multiple threads may share a queue safely, however.)
 
-*Documentation*: [GoDoc](https://godoc.org/github.com/johnsto/go-kvq/kvq), [Go Walker](https://gowalker.org/github.com/johnsto/go-kvq/kvq).
+**Documentation**: [GoDoc](https://godoc.org/github.com/johnsto/go-kvq/kvq), [Go Walker](https://gowalker.org/github.com/johnsto/go-kvq/kvq).
 
-This code is not in production use, so tread carefully.
+*This code is not in production use - tread carefully!*
 
 ## Example
 
