@@ -4,7 +4,7 @@ Package kvq is a persistent transactional queue. It supports goleveldb, levigo a
 
 To open a queue, first get a database instance, and then the queue itself. A DB can contain many queues of different names.
 
-	db, err := goleveldb.Open("db.db")
+	db, err := kvq.Open("db.db")
 	queue, err := db.Queue("tweets")
 
 (Remember to Close() when finished)
